@@ -1,0 +1,16 @@
+[Unit]
+Description=HoLA Agent
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=hola
+Group=docker
+Environment=HOLA_TOKEN=your-secret-token-here
+ExecStart=/usr/local/bin/hola-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

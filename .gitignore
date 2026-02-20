@@ -1,2 +1,18 @@
 # Worktrees
 .worktrees/
+
+# Go
+agent/hola-agent
+agent/agent
+
+# Android
+app/.gradle/
+app/build/
+app/app/build/
+app/local.properties
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
