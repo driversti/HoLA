@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -51,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.ContainerInfo
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
@@ -63,6 +66,7 @@ fun StackDetailScreen(
     stackName: String,
     serverRepository: ServerRepository,
     tokenRepository: TokenRepository,
+    webSocketManager: WebSocketManager,
     onContainerClick: (String) -> Unit,
     onViewCompose: () -> Unit,
     onBack: () -> Unit,
@@ -70,7 +74,7 @@ fun StackDetailScreen(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                return StackDetailViewModel(serverId, stackName, serverRepository, tokenRepository) as T
+                return StackDetailViewModel(serverId, stackName, serverRepository, tokenRepository, webSocketManager) as T
             }
         }
     ),
@@ -79,13 +83,41 @@ fun StackDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     var pullConfirmVisible by remember { mutableStateOf(false) }
+    var errorToShow by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(state.message, state.error) {
-        val msg = state.message ?: state.error
+    LaunchedEffect(state.message) {
+        val msg = state.message
         if (msg != null) {
             snackbarHostState.showSnackbar(msg)
             viewModel.clearMessage()
         }
+    }
+
+    LaunchedEffect(state.error) {
+        val err = state.error
+        if (err != null) {
+            errorToShow = err
+            viewModel.clearMessage()
+        }
+    }
+
+    if (errorToShow != null) {
+        AlertDialog(
+            onDismissRequest = { errorToShow = null },
+            title = { Text("Action Failed") },
+            text = {
+                Text(
+                    text = errorToShow ?: "",
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { errorToShow = null }) { Text("Dismiss") }
+            },
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            titleContentColor = MaterialTheme.colorScheme.onErrorContainer,
+            textContentColor = MaterialTheme.colorScheme.onErrorContainer,
+        )
     }
 
     if (pullConfirmVisible) {

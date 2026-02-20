@@ -178,9 +178,13 @@ func (h *handlers) stackAction(w http.ResponseWriter, r *http.Request) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("stack action failed", "name", name, "action", action, "error", err, "output", string(output))
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
 		respond.JSON(w, http.StatusOK, map[string]any{
 			"success": false,
-			"error":   fmt.Sprintf("failed to %s stack: %s", action, strings.TrimSpace(string(output))),
+			"error":   fmt.Sprintf("failed to %s stack: %s", action, detail),
 		})
 		return
 	}

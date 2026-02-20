@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.driversti.hola.data.api.ApiProvider
 import dev.driversti.hola.data.api.HolaApi
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.ContainerInfo
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
@@ -27,6 +28,7 @@ class StackDetailViewModel(
     private val stackName: String,
     private val serverRepository: ServerRepository,
     private val tokenRepository: TokenRepository,
+    private val webSocketManager: WebSocketManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(StackDetailState(stackName = stackName))
@@ -36,9 +38,36 @@ class StackDetailViewModel(
 
     init {
         load()
+        observeEvents()
     }
 
     fun refresh() = load()
+
+    private fun observeEvents() {
+        viewModelScope.launch {
+            webSocketManager.eventsFlow.collect { (sid, event) ->
+                if (sid == serverId && event.stack == stackName) {
+                    // Container state changed in this stack — refresh.
+                    refreshContainers()
+                }
+            }
+        }
+    }
+
+    private fun refreshContainers() {
+        val client = api ?: return
+        viewModelScope.launch {
+            try {
+                val detail = client.getStack(stackName)
+                _state.value = _state.value.copy(
+                    status = detail.status,
+                    containers = detail.containers,
+                )
+            } catch (_: Exception) {
+                // Silently ignore — will refresh on next manual pull.
+            }
+        }
+    }
 
     private fun load() {
         viewModelScope.launch {
@@ -78,11 +107,18 @@ class StackDetailViewModel(
                     "pull" -> client.pullStack(stackName)
                     else -> throw IllegalArgumentException("Unknown action: $action")
                 }
-                _state.value = _state.value.copy(
-                    actionInProgress = null,
-                    message = result.message ?: result.error,
-                )
-                if (result.success) refresh()
+                if (result.success) {
+                    _state.value = _state.value.copy(
+                        actionInProgress = null,
+                        message = result.message,
+                    )
+                    refresh()
+                } else {
+                    _state.value = _state.value.copy(
+                        actionInProgress = null,
+                        error = result.error ?: result.message ?: "Action failed",
+                    )
+                }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     actionInProgress = null,
