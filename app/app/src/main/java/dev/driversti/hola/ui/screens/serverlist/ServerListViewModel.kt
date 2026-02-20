@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -35,21 +36,29 @@ class ServerListViewModel(
     val state: StateFlow<ServerListState> = _state
 
     init {
-        loadServers()
+        observeServers()
     }
 
     fun refresh() {
-        loadServers()
+        fetchStatuses()
     }
 
-    private fun loadServers() {
+    private fun observeServers() {
+        viewModelScope.launch {
+            serverRepository.servers.collectLatest { servers ->
+                fetchStatuses(servers)
+            }
+        }
+    }
+
+    private fun fetchStatuses(servers: List<ServerConfig>? = null) {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
 
-            val servers = serverRepository.servers.first()
+            val serverList = servers ?: serverRepository.servers.first()
             val token = tokenRepository.getToken() ?: ""
 
-            val statuses = servers.map { server ->
+            val statuses = serverList.map { server ->
                 async { fetchServerStatus(server, token) }
             }.awaitAll()
 
