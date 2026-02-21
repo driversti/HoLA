@@ -109,6 +109,9 @@ data class ComposeFileResponse(
     val path: String,
 )
 
+@Serializable
+data class UpdateComposeRequest(val content: String)
+
 // --- Action Response ---
 
 @Serializable

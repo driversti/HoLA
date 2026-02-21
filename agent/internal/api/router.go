@@ -29,6 +29,7 @@ func NewRouter(version string, authMw *auth.Middleware, dockerClient *docker.Cli
 	mux.HandleFunc("GET /api/v1/stacks/{name}/compose", h.getComposeFile)
 
 	// Stacks — write
+	mux.HandleFunc("PUT /api/v1/stacks/{name}/compose", h.updateComposeFile)
 	mux.HandleFunc("POST /api/v1/stacks/register", h.registerStack)
 	mux.HandleFunc("POST /api/v1/stacks/{name}/start", h.stackAction)
 	mux.HandleFunc("POST /api/v1/stacks/{name}/stop", h.stackAction)

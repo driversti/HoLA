@@ -5,7 +5,9 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=hola
+# User should match the owner of compose files on the host.
+# Must be a member of the 'docker' group.
+User=erepublik
 Group=docker
 Environment=HOLA_TOKEN=your-secret-token-here
 ExecStart=/usr/local/bin/hola-agent

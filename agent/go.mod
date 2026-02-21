@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/shirou/gopsutil/v4 v4.26.1
+	nhooyr.io/websocket v1.8.17
 )
 
 require (
@@ -41,6 +42,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
-	nhooyr.io/websocket v1.8.17 // indirect
 )

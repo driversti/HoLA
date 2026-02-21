@@ -7,6 +7,7 @@ import dev.driversti.hola.data.model.ComposeFileResponse
 import dev.driversti.hola.data.model.ContainerLogsResponse
 import dev.driversti.hola.data.model.HealthResponse
 import dev.driversti.hola.data.model.RegisterStackRequest
+import dev.driversti.hola.data.model.UpdateComposeRequest
 import dev.driversti.hola.data.model.StackDetail
 import dev.driversti.hola.data.model.StackListResponse
 import dev.driversti.hola.data.model.SystemMetrics
@@ -14,6 +15,7 @@ import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -39,6 +41,12 @@ interface HolaApi {
 
     @GET("api/v1/stacks/{name}/compose")
     suspend fun getComposeFile(@Path("name") name: String): ComposeFileResponse
+
+    @PUT("api/v1/stacks/{name}/compose")
+    suspend fun updateComposeFile(
+        @Path("name") name: String,
+        @Body request: UpdateComposeRequest,
+    ): ActionResponse
 
     @POST("api/v1/stacks/register")
     suspend fun registerStack(@Body request: RegisterStackRequest): ActionResponse

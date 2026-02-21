@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/metrics"
 	"github.com/driversti/hola/internal/registry"
+	"gopkg.in/yaml.v3"
 )
 
 type handlers struct {
@@ -143,6 +145,130 @@ func (h *handlers) getComposeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, cf)
+}
+
+func (h *handlers) updateComposeFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid JSON body", "BAD_REQUEST")
+		return
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		respond.Error(w, http.StatusBadRequest, "content must not be empty", "BAD_REQUEST")
+		return
+	}
+
+	// Validate YAML syntax.
+	var parsed any
+	if err := yaml.Unmarshal([]byte(body.Content), &parsed); err != nil {
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("invalid YAML syntax: %s", err),
+		})
+		return
+	}
+
+	// Resolve compose file path.
+	composePath := h.resolveComposeFilePath(r.Context(), name)
+	if composePath == "" {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("compose file not found for stack %q", name), "NOT_FOUND")
+		return
+	}
+
+	dir := filepath.Dir(composePath)
+
+	// Write content to a temp file in the same directory for docker compose validation.
+	tmpFile, err := os.CreateTemp(dir, ".compose-validate-*.yml")
+	if err != nil {
+		slog.Error("failed to create temp file", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to create temp file", "IO_ERROR")
+		return
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.WriteString(body.Content); err != nil {
+		tmpFile.Close()
+		slog.Error("failed to write temp file", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to write temp file", "IO_ERROR")
+		return
+	}
+	tmpFile.Close()
+
+	// Validate with docker compose.
+	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", tmpPath, "config", "-q")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("docker compose validation failed: %s", detail),
+		})
+		return
+	}
+
+	// Preserve original file permissions.
+	fileInfo, err := os.Stat(composePath)
+	if err != nil {
+		slog.Error("failed to stat compose file", "path", composePath, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to read compose file info", "IO_ERROR")
+		return
+	}
+	perm := fileInfo.Mode().Perm()
+
+	// Create .bak backup of original.
+	originalData, err := os.ReadFile(composePath)
+	if err != nil {
+		slog.Error("failed to read original compose file", "path", composePath, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to read original compose file", "IO_ERROR")
+		return
+	}
+	if err := os.WriteFile(composePath+".bak", originalData, perm); err != nil {
+		slog.Error("failed to create backup", "path", composePath+".bak", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to create backup", "IO_ERROR")
+		return
+	}
+
+	// Write new content to the compose file.
+	if err := os.WriteFile(composePath, []byte(body.Content), perm); err != nil {
+		slog.Error("failed to write compose file", "path", composePath, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to write compose file", "IO_ERROR")
+		return
+	}
+
+	slog.Info("compose file updated", "stack", name, "path", composePath)
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Compose file for stack '%s' updated successfully", name),
+	})
+}
+
+// resolveComposeFilePath tries to find the compose file path for a stack.
+// It first checks the running stack via docker, then falls back to the registry.
+func (h *handlers) resolveComposeFilePath(ctx context.Context, stackName string) string {
+	cf, err := h.docker.GetComposeFile(ctx, stackName)
+	if err == nil && cf.Path != "" {
+		return cf.Path
+	}
+
+	// Fall back to registry for downed/registered stacks.
+	if rs := h.registry.Get(stackName); rs != nil {
+		if path := findComposeFile(rs.WorkingDir); path != "" {
+			return path
+		}
+	}
+
+	return ""
 }
 
 // --- Container logs ---
