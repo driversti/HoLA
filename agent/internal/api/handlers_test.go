@@ -10,13 +10,14 @@ import (
 	"github.com/driversti/hola/internal/api"
 	"github.com/driversti/hola/internal/auth"
 	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/update"
 	"github.com/driversti/hola/internal/ws"
 )
 
 func newTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	store, _ := registry.NewStore(t.TempDir())
-	return api.NewRouter("0.1.0-test", auth.NewMiddleware("test-token"), nil, ws.NewHandler(nil), store)
+	return api.NewRouter("0.1.0-test", auth.NewMiddleware("test-token"), nil, ws.NewHandler(nil), store, update.New("0.1.0-test", "driversti/HoLA"))
 }
 
 func TestHealthEndpoint(t *testing.T) {

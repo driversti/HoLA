@@ -15,10 +15,14 @@ import (
 	"github.com/driversti/hola/internal/auth"
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/update"
 	"github.com/driversti/hola/internal/ws"
 )
 
-const version = "0.2.0"
+const (
+	version = "0.2.0"
+	repo    = "driversti/HoLA"
+)
 
 func main() {
 	token := flag.String("token", "", "Bearer token for API authentication")
@@ -56,7 +60,8 @@ func main() {
 
 	wsHandler := ws.NewHandler(eventHub)
 	authMiddleware := auth.NewMiddleware(*token)
-	router := api.NewRouter(version, authMiddleware, dockerClient, wsHandler, registryStore)
+	updater := update.New(version, repo)
+	router := api.NewRouter(version, authMiddleware, dockerClient, wsHandler, registryStore, updater)
 
 	srv := &http.Server{
 		Addr:    ":8420",

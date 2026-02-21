@@ -14,10 +14,14 @@ import (
 	"strconv"
 	"strings"
 
+	"errors"
+	"time"
+
 	"github.com/driversti/hola/internal/api/respond"
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/metrics"
 	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/update"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,6 +29,7 @@ type handlers struct {
 	version  string
 	docker   *docker.Client
 	registry *registry.Store
+	updater  *update.Updater
 }
 
 // --- System endpoints ---
@@ -61,6 +66,75 @@ func (h *handlers) systemMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, m)
+}
+
+// --- Update endpoints ---
+
+func (h *handlers) checkUpdate(w http.ResponseWriter, r *http.Request) {
+	check, err := h.updater.CheckLatest(r.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, update.ErrNoReleases):
+			respond.Error(w, http.StatusNotFound, "no releases available", "NO_RELEASES")
+		case errors.Is(err, update.ErrRateLimited):
+			respond.Error(w, http.StatusTooManyRequests, "GitHub API rate limit exceeded, try again later", "RATE_LIMITED")
+		case errors.Is(err, update.ErrAssetNotFound):
+			respond.Error(w, http.StatusNotFound,
+				fmt.Sprintf("no binary available for %s/%s", runtime.GOOS, runtime.GOARCH),
+				"PLATFORM_NOT_AVAILABLE")
+		default:
+			slog.Error("failed to check for updates", "error", err)
+			respond.Error(w, http.StatusBadGateway, "failed to check for updates", "GITHUB_ERROR")
+		}
+		return
+	}
+	respond.JSON(w, http.StatusOK, check)
+}
+
+func (h *handlers) applyUpdate(w http.ResponseWriter, r *http.Request) {
+	err := h.updater.Apply(r.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, update.ErrAlreadyLatest):
+			respond.JSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "already running the latest version",
+			})
+		case errors.Is(err, update.ErrNoReleases):
+			respond.Error(w, http.StatusNotFound, "no releases available", "NO_RELEASES")
+		case errors.Is(err, update.ErrRateLimited):
+			respond.Error(w, http.StatusTooManyRequests, "GitHub API rate limit exceeded", "RATE_LIMITED")
+		case errors.Is(err, update.ErrAssetNotFound):
+			respond.Error(w, http.StatusNotFound,
+				fmt.Sprintf("no binary available for %s/%s", runtime.GOOS, runtime.GOARCH),
+				"PLATFORM_NOT_AVAILABLE")
+		case errors.Is(err, update.ErrChecksumsNotFound):
+			respond.Error(w, http.StatusUnprocessableEntity,
+				"release is missing checksums.txt, refusing to update", "CHECKSUMS_MISSING")
+		case errors.Is(err, update.ErrChecksumMismatch):
+			respond.Error(w, http.StatusUnprocessableEntity,
+				"downloaded binary failed checksum verification", "CHECKSUM_MISMATCH")
+		default:
+			slog.Error("failed to apply update", "error", err)
+			respond.Error(w, http.StatusInternalServerError, "update failed: "+err.Error(), "UPDATE_FAILED")
+		}
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "update applied successfully, agent is restarting",
+	})
+
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		slog.Info("agent updated, exiting for restart")
+		os.Exit(0)
+	}()
 }
 
 // --- Stack read endpoints ---

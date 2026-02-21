@@ -6,19 +6,22 @@ import (
 	"github.com/driversti/hola/internal/auth"
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/update"
 	"github.com/driversti/hola/internal/ws"
 )
 
 // NewRouter creates the HTTP router with all API routes.
-func NewRouter(version string, authMw *auth.Middleware, dockerClient *docker.Client, wsHandler *ws.Handler, registryStore *registry.Store) http.Handler {
+func NewRouter(version string, authMw *auth.Middleware, dockerClient *docker.Client, wsHandler *ws.Handler, registryStore *registry.Store, updater *update.Updater) http.Handler {
 	mux := http.NewServeMux()
 
-	h := &handlers{version: version, docker: dockerClient, registry: registryStore}
+	h := &handlers{version: version, docker: dockerClient, registry: registryStore, updater: updater}
 
 	// System
 	mux.HandleFunc("GET /api/v1/health", h.health)
 	mux.HandleFunc("GET /api/v1/agent/info", h.agentInfo)
 	mux.HandleFunc("GET /api/v1/system/metrics", h.systemMetrics)
+	mux.HandleFunc("GET /api/v1/agent/update", h.checkUpdate)
+	mux.HandleFunc("POST /api/v1/agent/update", h.applyUpdate)
 
 	// Filesystem browse
 	mux.HandleFunc("GET /api/v1/fs/browse", h.browsePath)
