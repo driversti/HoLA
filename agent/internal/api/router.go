@@ -44,6 +44,19 @@ func NewRouter(version string, authMw *auth.Middleware, dockerClient *docker.Cli
 	mux.HandleFunc("POST /api/v1/containers/{id}/stop", h.containerAction)
 	mux.HandleFunc("POST /api/v1/containers/{id}/restart", h.containerAction)
 
+	// Docker resources
+	mux.HandleFunc("GET /api/v1/docker/disk-usage", h.dockerDiskUsage)
+	mux.HandleFunc("GET /api/v1/docker/images", h.listImages)
+	mux.HandleFunc("DELETE /api/v1/docker/images/{id}", h.removeImage)
+	mux.HandleFunc("POST /api/v1/docker/images/prune", h.pruneImages)
+	mux.HandleFunc("GET /api/v1/docker/volumes", h.listVolumes)
+	mux.HandleFunc("DELETE /api/v1/docker/volumes/{name}", h.removeVolume)
+	mux.HandleFunc("POST /api/v1/docker/volumes/prune", h.pruneVolumes)
+	mux.HandleFunc("GET /api/v1/docker/networks", h.listNetworks)
+	mux.HandleFunc("DELETE /api/v1/docker/networks/{id}", h.removeNetwork)
+	mux.HandleFunc("POST /api/v1/docker/networks/prune", h.pruneNetworks)
+	mux.HandleFunc("POST /api/v1/docker/buildcache/prune", h.pruneBuildCache)
+
 	// WebSocket
 	mux.Handle("GET /api/v1/ws", wsHandler)
 

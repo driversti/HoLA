@@ -535,6 +535,152 @@ func (h *handlers) unregisterStack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- Docker resources ---
+
+func (h *handlers) dockerDiskUsage(w http.ResponseWriter, r *http.Request) {
+	summary, err := h.docker.DiskUsage(r.Context())
+	if err != nil {
+		slog.Error("failed to get disk usage", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to get disk usage", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, summary)
+}
+
+func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
+	images, err := h.docker.ListImages(r.Context())
+	if err != nil {
+		slog.Error("failed to list images", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to list images", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"images": images})
+}
+
+func (h *handlers) removeImage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	force := r.URL.Query().Get("force") == "true"
+
+	if err := h.docker.RemoveImage(r.Context(), id, force); err != nil {
+		slog.Error("failed to remove image", "id", id, "error", err)
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("failed to remove image: %s", err),
+		})
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Image %s removed", id),
+	})
+}
+
+func (h *handlers) pruneImages(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	result, err := h.docker.PruneImages(r.Context(), dryRun)
+	if err != nil {
+		slog.Error("failed to prune images", "dry_run", dryRun, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to prune images", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+func (h *handlers) listVolumes(w http.ResponseWriter, r *http.Request) {
+	volumes, err := h.docker.ListVolumes(r.Context())
+	if err != nil {
+		slog.Error("failed to list volumes", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to list volumes", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"volumes": volumes})
+}
+
+func (h *handlers) removeVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	force := r.URL.Query().Get("force") == "true"
+
+	if err := h.docker.RemoveVolume(r.Context(), name, force); err != nil {
+		slog.Error("failed to remove volume", "name", name, "error", err)
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("failed to remove volume: %s", err),
+		})
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Volume %s removed", name),
+	})
+}
+
+func (h *handlers) pruneVolumes(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	result, err := h.docker.PruneVolumes(r.Context(), dryRun)
+	if err != nil {
+		slog.Error("failed to prune volumes", "dry_run", dryRun, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to prune volumes", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+func (h *handlers) listNetworks(w http.ResponseWriter, r *http.Request) {
+	networks, err := h.docker.ListNetworks(r.Context())
+	if err != nil {
+		slog.Error("failed to list networks", "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to list networks", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"networks": networks})
+}
+
+func (h *handlers) removeNetwork(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if err := h.docker.RemoveNetwork(r.Context(), id); err != nil {
+		slog.Error("failed to remove network", "id", id, "error", err)
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("failed to remove network: %s", err),
+		})
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Network %s removed", id),
+	})
+}
+
+func (h *handlers) pruneNetworks(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	result, err := h.docker.PruneNetworks(r.Context(), dryRun)
+	if err != nil {
+		slog.Error("failed to prune networks", "dry_run", dryRun, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to prune networks", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+func (h *handlers) pruneBuildCache(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	result, err := h.docker.PruneBuildCache(r.Context(), dryRun)
+	if err != nil {
+		slog.Error("failed to prune build cache", "dry_run", dryRun, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to prune build cache", "DOCKER_ERROR")
+		return
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
 // --- Helpers ---
 
 func dockerVersion() string {

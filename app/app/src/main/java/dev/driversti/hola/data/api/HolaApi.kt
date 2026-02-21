@@ -5,15 +5,21 @@ import dev.driversti.hola.data.model.AgentInfo
 import dev.driversti.hola.data.model.BrowseResponse
 import dev.driversti.hola.data.model.ComposeFileResponse
 import dev.driversti.hola.data.model.ContainerLogsResponse
+import dev.driversti.hola.data.model.DiskUsageResponse
 import dev.driversti.hola.data.model.HealthResponse
+import dev.driversti.hola.data.model.ImageListResponse
+import dev.driversti.hola.data.model.NetworkListResponse
+import dev.driversti.hola.data.model.PruneResponse
 import dev.driversti.hola.data.model.RegisterStackRequest
 import dev.driversti.hola.data.model.UpdateComposeRequest
 import dev.driversti.hola.data.model.StackDetail
 import dev.driversti.hola.data.model.StackListResponse
 import dev.driversti.hola.data.model.SystemMetrics
+import dev.driversti.hola.data.model.VolumeListResponse
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -84,4 +90,39 @@ interface HolaApi {
 
     @POST("api/v1/containers/{id}/restart")
     suspend fun restartContainer(@Path("id") id: String): ActionResponse
+
+    // Docker resources
+
+    @GET("api/v1/docker/disk-usage")
+    suspend fun diskUsage(): DiskUsageResponse
+
+    @GET("api/v1/docker/images")
+    suspend fun listImages(): ImageListResponse
+
+    @HTTP(method = "DELETE", path = "api/v1/docker/images/{id}", hasBody = false)
+    suspend fun removeImage(@Path("id") id: String, @Query("force") force: Boolean = false): ActionResponse
+
+    @POST("api/v1/docker/images/prune")
+    suspend fun pruneImages(@Query("dry_run") dryRun: Boolean = false): PruneResponse
+
+    @GET("api/v1/docker/volumes")
+    suspend fun listVolumes(): VolumeListResponse
+
+    @HTTP(method = "DELETE", path = "api/v1/docker/volumes/{name}", hasBody = false)
+    suspend fun removeVolume(@Path("name") name: String, @Query("force") force: Boolean = false): ActionResponse
+
+    @POST("api/v1/docker/volumes/prune")
+    suspend fun pruneVolumes(@Query("dry_run") dryRun: Boolean = false): PruneResponse
+
+    @GET("api/v1/docker/networks")
+    suspend fun listNetworks(): NetworkListResponse
+
+    @HTTP(method = "DELETE", path = "api/v1/docker/networks/{id}", hasBody = false)
+    suspend fun removeNetwork(@Path("id") id: String): ActionResponse
+
+    @POST("api/v1/docker/networks/prune")
+    suspend fun pruneNetworks(@Query("dry_run") dryRun: Boolean = false): PruneResponse
+
+    @POST("api/v1/docker/buildcache/prune")
+    suspend fun pruneBuildCache(@Query("dry_run") dryRun: Boolean = false): PruneResponse
 }

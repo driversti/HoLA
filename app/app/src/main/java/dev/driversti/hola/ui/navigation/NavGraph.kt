@@ -13,6 +13,8 @@ import dev.driversti.hola.ui.screens.addserver.AddServerScreen
 import dev.driversti.hola.ui.screens.composeviewer.ComposeViewerScreen
 import dev.driversti.hola.ui.screens.containerdetail.ContainerDetailScreen
 import dev.driversti.hola.ui.screens.filebrowser.FileBrowserScreen
+import dev.driversti.hola.ui.screens.resources.ResourceListScreen
+import dev.driversti.hola.ui.screens.resources.ResourcesDashboardScreen
 import dev.driversti.hola.ui.screens.serverdetail.ServerDetailScreen
 import dev.driversti.hola.ui.screens.serverlist.ServerListScreen
 import dev.driversti.hola.ui.screens.settings.SettingsScreen
@@ -63,6 +65,9 @@ fun HolaNavGraph(
                 onAddStack = {
                     navController.navigate(FileBrowser(route.serverId))
                 },
+                onResources = {
+                    navController.navigate(ResourcesDashboard(route.serverId))
+                },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -112,6 +117,30 @@ fun HolaNavGraph(
             ComposeViewerScreen(
                 serverId = route.serverId,
                 stackName = route.stackName,
+                serverRepository = serverRepository,
+                tokenRepository = tokenRepository,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable<ResourcesDashboard> { backStack ->
+            val route = backStack.toRoute<ResourcesDashboard>()
+            ResourcesDashboardScreen(
+                serverId = route.serverId,
+                serverRepository = serverRepository,
+                tokenRepository = tokenRepository,
+                onResourceClick = { resourceType ->
+                    navController.navigate(ResourceList(route.serverId, resourceType))
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable<ResourceList> { backStack ->
+            val route = backStack.toRoute<ResourceList>()
+            ResourceListScreen(
+                serverId = route.serverId,
+                resourceType = route.resourceType,
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
                 onBack = { navController.popBackStack() },

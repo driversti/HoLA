@@ -9,9 +9,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -384,6 +389,460 @@ func (c *Client) StreamContainerLogs(ctx context.Context, containerID string, ta
 		Follow:     true,
 		Tail:       tail,
 	})
+}
+
+// --- Docker resource management ---
+
+// DiskUsage returns an aggregated summary of Docker resource usage.
+func (c *Client) DiskUsage(ctx context.Context) (*DiskUsageSummary, error) {
+	du, err := c.cli.DiskUsage(ctx, types.DiskUsageOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("disk usage: %w", err)
+	}
+
+	// Build container image ID set for in-use detection.
+	usedImageIDs := make(map[string]bool)
+	for _, ctr := range du.Containers {
+		usedImageIDs[ctr.ImageID] = true
+	}
+
+	var imgSummary ResourceSummary
+	for _, img := range du.Images {
+		imgSummary.TotalCount++
+		imgSummary.TotalSize += img.Size
+		if usedImageIDs[img.ID] {
+			imgSummary.InUseCount++
+		} else {
+			imgSummary.ReclaimableSize += img.Size
+		}
+	}
+
+	var volSummary ResourceSummary
+	for _, vol := range du.Volumes {
+		volSummary.TotalCount++
+		var sz int64
+		if vol.UsageData != nil && vol.UsageData.Size > 0 {
+			sz = vol.UsageData.Size
+		}
+		volSummary.TotalSize += sz
+		if vol.UsageData != nil && vol.UsageData.RefCount > 0 {
+			volSummary.InUseCount++
+		} else {
+			volSummary.ReclaimableSize += sz
+		}
+	}
+
+	// Networks: fetch separately since DiskUsage doesn't include them.
+	nets, err := c.cli.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("network list: %w", err)
+	}
+	var netSummary NetworkSummary
+	for _, n := range nets {
+		netSummary.TotalCount++
+		if len(n.Containers) > 0 {
+			netSummary.InUseCount++
+		} else if !isBuiltinNetwork(n.Name) {
+			netSummary.ReclaimableCount++
+		}
+	}
+
+	var cacheSummary CacheSummary
+	for _, bc := range du.BuildCache {
+		cacheSummary.TotalSize += bc.Size
+	}
+
+	return &DiskUsageSummary{
+		Images:     imgSummary,
+		Volumes:    volSummary,
+		Networks:   netSummary,
+		BuildCache: cacheSummary,
+	}, nil
+}
+
+// ListImages returns all Docker images with container usage info.
+func (c *Client) ListImages(ctx context.Context) ([]ImageInfo, error) {
+	images, err := c.cli.ImageList(ctx, image.ListOptions{All: false})
+	if err != nil {
+		return nil, fmt.Errorf("image list: %w", err)
+	}
+
+	// Build a map of image ID → container names.
+	containers, err := c.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("container list: %w", err)
+	}
+	imageContainers := make(map[string][]string)
+	for _, ctr := range containers {
+		name := strings.TrimPrefix(ctr.Names[0], "/")
+		imageContainers[ctr.ImageID] = append(imageContainers[ctr.ImageID], name)
+	}
+
+	result := make([]ImageInfo, 0, len(images))
+	for _, img := range images {
+		tags := img.RepoTags
+		if tags == nil {
+			tags = []string{}
+		}
+		ctrs := imageContainers[img.ID]
+		if ctrs == nil {
+			ctrs = []string{}
+		}
+		result = append(result, ImageInfo{
+			ID:         img.ID,
+			Tags:       tags,
+			Size:       img.Size,
+			Created:    img.Created,
+			InUse:      len(ctrs) > 0,
+			Containers: ctrs,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Created > result[j].Created
+	})
+
+	return result, nil
+}
+
+// RemoveImage removes a Docker image by ID.
+func (c *Client) RemoveImage(ctx context.Context, id string, force bool) error {
+	_, err := c.cli.ImageRemove(ctx, id, image.RemoveOptions{Force: force, PruneChildren: true})
+	if err != nil {
+		return fmt.Errorf("remove image: %w", err)
+	}
+	return nil
+}
+
+// PruneImages removes unused images. If dryRun is true, returns what would be removed.
+func (c *Client) PruneImages(ctx context.Context, dryRun bool) (*PruneResult, error) {
+	if dryRun {
+		return c.pruneImagesDryRun(ctx)
+	}
+
+	report, err := c.cli.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "false")))
+	if err != nil {
+		return nil, fmt.Errorf("prune images: %w", err)
+	}
+
+	items := make([]string, 0, len(report.ImagesDeleted))
+	for _, d := range report.ImagesDeleted {
+		if d.Deleted != "" {
+			items = append(items, d.Deleted)
+		}
+	}
+
+	return &PruneResult{
+		DryRun:         false,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: int64(report.SpaceReclaimed),
+	}, nil
+}
+
+func (c *Client) pruneImagesDryRun(ctx context.Context) (*PruneResult, error) {
+	images, err := c.ListImages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []string
+	var reclaimable int64
+	for _, img := range images {
+		if !img.InUse {
+			label := img.ID[:12]
+			if len(img.Tags) > 0 && img.Tags[0] != "<none>:<none>" {
+				label = img.Tags[0]
+			}
+			items = append(items, label)
+			reclaimable += img.Size
+		}
+	}
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         true,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: reclaimable,
+	}, nil
+}
+
+// ListVolumes returns all Docker volumes with container usage info.
+func (c *Client) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
+	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("volume list: %w", err)
+	}
+
+	// Get disk usage data for volume sizes.
+	du, err := c.cli.DiskUsage(ctx, types.DiskUsageOptions{
+		Types: []types.DiskUsageObject{types.VolumeObject},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("disk usage for volumes: %w", err)
+	}
+	volUsage := make(map[string]*volume.UsageData, len(du.Volumes))
+	for _, v := range du.Volumes {
+		if v.UsageData != nil {
+			volUsage[v.Name] = v.UsageData
+		}
+	}
+
+	// Build volume → container name map via container list.
+	containers, err := c.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("container list: %w", err)
+	}
+	volContainers := make(map[string][]string)
+	for _, ctr := range containers {
+		name := strings.TrimPrefix(ctr.Names[0], "/")
+		for _, m := range ctr.Mounts {
+			if m.Type == "volume" {
+				volContainers[m.Name] = append(volContainers[m.Name], name)
+			}
+		}
+	}
+
+	result := make([]VolumeInfo, 0, len(resp.Volumes))
+	for _, vol := range resp.Volumes {
+		ctrs := volContainers[vol.Name]
+		if ctrs == nil {
+			ctrs = []string{}
+		}
+		var sz int64
+		if usage, ok := volUsage[vol.Name]; ok && usage.Size > 0 {
+			sz = usage.Size
+		}
+		result = append(result, VolumeInfo{
+			Name:       vol.Name,
+			Driver:     vol.Driver,
+			Size:       sz,
+			Created:    vol.CreatedAt,
+			InUse:      len(ctrs) > 0,
+			Containers: ctrs,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+
+	return result, nil
+}
+
+// RemoveVolume removes a Docker volume by name.
+func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) error {
+	if err := c.cli.VolumeRemove(ctx, name, force); err != nil {
+		return fmt.Errorf("remove volume: %w", err)
+	}
+	return nil
+}
+
+// PruneVolumes removes unused volumes. If dryRun is true, returns what would be removed.
+func (c *Client) PruneVolumes(ctx context.Context, dryRun bool) (*PruneResult, error) {
+	if dryRun {
+		return c.pruneVolumesDryRun(ctx)
+	}
+
+	report, err := c.cli.VolumesPrune(ctx, filters.NewArgs())
+	if err != nil {
+		return nil, fmt.Errorf("prune volumes: %w", err)
+	}
+
+	items := report.VolumesDeleted
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         false,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: int64(report.SpaceReclaimed),
+	}, nil
+}
+
+func (c *Client) pruneVolumesDryRun(ctx context.Context) (*PruneResult, error) {
+	volumes, err := c.ListVolumes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []string
+	var reclaimable int64
+	for _, vol := range volumes {
+		if !vol.InUse {
+			items = append(items, vol.Name)
+			reclaimable += vol.Size
+		}
+	}
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         true,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: reclaimable,
+	}, nil
+}
+
+// ListNetworks returns all Docker networks with container usage info.
+func (c *Client) ListNetworks(ctx context.Context) ([]NetworkInfo, error) {
+	nets, err := c.cli.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("network list: %w", err)
+	}
+
+	result := make([]NetworkInfo, 0, len(nets))
+	for _, n := range nets {
+		ctrs := make([]string, 0, len(n.Containers))
+		for _, ep := range n.Containers {
+			ctrs = append(ctrs, ep.Name)
+		}
+
+		result = append(result, NetworkInfo{
+			ID:         n.ID,
+			Name:       n.Name,
+			Driver:     n.Driver,
+			Scope:      n.Scope,
+			Internal:   n.Internal,
+			InUse:      len(n.Containers) > 0,
+			Containers: ctrs,
+			Builtin:    isBuiltinNetwork(n.Name),
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+
+	return result, nil
+}
+
+// RemoveNetwork removes a Docker network by ID.
+func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
+	if err := c.cli.NetworkRemove(ctx, id); err != nil {
+		return fmt.Errorf("remove network: %w", err)
+	}
+	return nil
+}
+
+// PruneNetworks removes unused networks. If dryRun is true, returns what would be removed.
+func (c *Client) PruneNetworks(ctx context.Context, dryRun bool) (*PruneResult, error) {
+	if dryRun {
+		return c.pruneNetworksDryRun(ctx)
+	}
+
+	report, err := c.cli.NetworksPrune(ctx, filters.NewArgs())
+	if err != nil {
+		return nil, fmt.Errorf("prune networks: %w", err)
+	}
+
+	items := report.NetworksDeleted
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         false,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: 0,
+	}, nil
+}
+
+func (c *Client) pruneNetworksDryRun(ctx context.Context) (*PruneResult, error) {
+	networks, err := c.ListNetworks(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []string
+	for _, n := range networks {
+		if !n.InUse && !n.Builtin {
+			items = append(items, n.Name)
+		}
+	}
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         true,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: 0,
+	}, nil
+}
+
+// PruneBuildCache clears the Docker build cache. If dryRun is true, returns what would be removed.
+func (c *Client) PruneBuildCache(ctx context.Context, dryRun bool) (*PruneResult, error) {
+	if dryRun {
+		return c.pruneBuildCacheDryRun(ctx)
+	}
+
+	report, err := c.cli.BuildCachePrune(ctx, build.CachePruneOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("prune build cache: %w", err)
+	}
+
+	items := []string{}
+	if report != nil {
+		if report.CachesDeleted == nil {
+			report.CachesDeleted = []string{}
+		}
+		items = report.CachesDeleted
+		return &PruneResult{
+			DryRun:         false,
+			ItemsToRemove:  items,
+			Count:          len(items),
+			SpaceReclaimed: int64(report.SpaceReclaimed),
+		}, nil
+	}
+
+	return &PruneResult{
+		DryRun:         false,
+		ItemsToRemove:  items,
+		Count:          0,
+		SpaceReclaimed: 0,
+	}, nil
+}
+
+func (c *Client) pruneBuildCacheDryRun(ctx context.Context) (*PruneResult, error) {
+	du, err := c.cli.DiskUsage(ctx, types.DiskUsageOptions{
+		Types: []types.DiskUsageObject{types.BuildCacheObject},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("disk usage for build cache: %w", err)
+	}
+
+	var items []string
+	var totalSize int64
+	for _, bc := range du.BuildCache {
+		if !bc.InUse {
+			items = append(items, bc.Description)
+			totalSize += bc.Size
+		}
+	}
+	if items == nil {
+		items = []string{}
+	}
+
+	return &PruneResult{
+		DryRun:         true,
+		ItemsToRemove:  items,
+		Count:          len(items),
+		SpaceReclaimed: totalSize,
+	}, nil
+}
+
+func isBuiltinNetwork(name string) bool {
+	return name == "bridge" || name == "host" || name == "none"
 }
 
 func stackStatus(serviceCount, runningCount int) string {

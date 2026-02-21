@@ -24,4 +24,10 @@ data class ComposeViewer(val serverId: String, val stackName: String)
 data class FileBrowser(val serverId: String)
 
 @Serializable
+data class ResourcesDashboard(val serverId: String)
+
+@Serializable
+data class ResourceList(val serverId: String, val resourceType: String)
+
+@Serializable
 object Settings

@@ -141,6 +141,85 @@ data class FsEntry(
 @Serializable
 data class RegisterStackRequest(val path: String)
 
+// --- Docker Resources ---
+
+@Serializable
+data class DiskUsageResponse(
+    val images: DiskResourceSummary,
+    val volumes: DiskResourceSummary,
+    val networks: DiskNetworkSummary,
+    @SerialName("build_cache") val buildCache: DiskCacheSummary,
+)
+
+@Serializable
+data class DiskResourceSummary(
+    @SerialName("total_count") val totalCount: Int,
+    @SerialName("total_size") val totalSize: Long,
+    @SerialName("in_use_count") val inUseCount: Int,
+    @SerialName("reclaimable_size") val reclaimableSize: Long,
+)
+
+@Serializable
+data class DiskNetworkSummary(
+    @SerialName("total_count") val totalCount: Int,
+    @SerialName("in_use_count") val inUseCount: Int,
+    @SerialName("reclaimable_count") val reclaimableCount: Int,
+)
+
+@Serializable
+data class DiskCacheSummary(
+    @SerialName("total_size") val totalSize: Long,
+)
+
+@Serializable
+data class ImageListResponse(val images: List<DockerImage>)
+
+@Serializable
+data class DockerImage(
+    val id: String,
+    val tags: List<String>,
+    val size: Long,
+    val created: Long,
+    @SerialName("in_use") val inUse: Boolean,
+    val containers: List<String>,
+)
+
+@Serializable
+data class VolumeListResponse(val volumes: List<DockerVolume>)
+
+@Serializable
+data class DockerVolume(
+    val name: String,
+    val driver: String,
+    val size: Long,
+    val created: String,
+    @SerialName("in_use") val inUse: Boolean,
+    val containers: List<String>,
+)
+
+@Serializable
+data class NetworkListResponse(val networks: List<DockerNetwork>)
+
+@Serializable
+data class DockerNetwork(
+    val id: String,
+    val name: String,
+    val driver: String,
+    val scope: String,
+    val internal: Boolean,
+    @SerialName("in_use") val inUse: Boolean,
+    val containers: List<String>,
+    val builtin: Boolean,
+)
+
+@Serializable
+data class PruneResponse(
+    @SerialName("dry_run") val dryRun: Boolean,
+    @SerialName("items_to_remove") val itemsToRemove: List<String>,
+    val count: Int,
+    @SerialName("space_reclaimed") val spaceReclaimed: Long,
+)
+
 // --- Error ---
 
 @Serializable
