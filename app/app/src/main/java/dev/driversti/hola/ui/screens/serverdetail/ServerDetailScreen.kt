@@ -152,7 +152,11 @@ private fun MetricsHeader(metrics: SystemMetrics) {
         ),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            MetricRow("CPU", metrics.cpu.usagePercent)
+            MetricRow(
+                "CPU",
+                metrics.cpu.usagePercent,
+                suffix = metrics.cpu.temperatureCelsius?.let { "${it.toInt()}\u00B0C" },
+            )
             Spacer(modifier = Modifier.height(8.dp))
             MetricRow("RAM", metrics.memory.usagePercent)
             metrics.disk.forEach { disk ->
@@ -164,14 +168,23 @@ private fun MetricsHeader(metrics: SystemMetrics) {
 }
 
 @Composable
-private fun MetricRow(label: String, percent: Double) {
+private fun MetricRow(label: String, percent: Double, suffix: String? = null) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text("${percent.toInt()}%", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${percent.toInt()}%", style = MaterialTheme.typography.bodyMedium)
+                if (suffix != null) {
+                    Text(
+                        suffix,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(

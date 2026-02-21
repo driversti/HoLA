@@ -130,9 +130,12 @@ private fun ServerCard(status: ServerStatus, onClick: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     if (status.online && status.metrics != null) {
+                        val tempSuffix = status.metrics.cpu.temperatureCelsius
+                            ?.let { "  ${it.toInt()}\u00B0C" } ?: ""
                         Text(
                             text = "CPU ${status.metrics.cpu.usagePercent.toInt()}%  " +
-                                    "RAM ${status.metrics.memory.usagePercent.toInt()}%",
+                                    "RAM ${status.metrics.memory.usagePercent.toInt()}%" +
+                                    tempSuffix,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

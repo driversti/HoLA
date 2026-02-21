@@ -34,6 +34,7 @@ data class SystemMetrics(
 data class CpuMetrics(
     @SerialName("usage_percent") val usagePercent: Double,
     val cores: Int,
+    @SerialName("temperature_celsius") val temperatureCelsius: Double? = null,
 )
 
 @Serializable
