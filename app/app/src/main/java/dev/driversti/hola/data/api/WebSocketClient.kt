@@ -51,6 +51,7 @@ class WebSocketClient(
 
     // Active subscriptions to replay on reconnect.
     private val activeSubscriptions = mutableSetOf<SubscriptionKey>()
+    private var metricsIntervalSeconds = 3
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -76,6 +77,7 @@ class WebSocketClient(
     fun subscribeMetrics(intervalSeconds: Int = 3) {
         val key = SubscriptionKey("metrics")
         if (activeSubscriptions.add(key)) {
+            metricsIntervalSeconds = intervalSeconds
             send(WsMessage(
                 type = "subscribe",
                 payload = buildJsonObject {
@@ -198,7 +200,7 @@ class WebSocketClient(
             val payload = buildJsonObject {
                 put("stream", key.stream)
                 key.containerId?.let { put("container_id", it) }
-                if (key.stream == "metrics") put("interval_seconds", 3)
+                if (key.stream == "metrics") put("interval_seconds", metricsIntervalSeconds)
             }
             send(WsMessage(type = "subscribe", payload = payload))
         }

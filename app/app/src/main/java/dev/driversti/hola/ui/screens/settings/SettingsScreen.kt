@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -82,7 +84,7 @@ fun SettingsScreen(
                     token = newValue
                     tokenRepository.setToken(newValue)
                 },
-                label = { Text("Token") },
+                label = { Text("API Token") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 visualTransformation = if (tokenVisible) {
@@ -93,7 +95,10 @@ fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 trailingIcon = {
                     IconButton(onClick = { tokenVisible = !tokenVisible }) {
-                        Text(if (tokenVisible) "Hide" else "Show")
+                        Icon(
+                            imageVector = if (tokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (tokenVisible) "Hide" else "Show",
+                        )
                     }
                 },
             )
@@ -130,7 +135,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "HoLA v0.1.0",
+                "HoLA v${dev.driversti.hola.BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

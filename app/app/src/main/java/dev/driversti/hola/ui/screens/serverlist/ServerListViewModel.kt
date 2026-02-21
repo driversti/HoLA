@@ -21,6 +21,7 @@ data class ServerStatus(
     val online: Boolean,
     val metrics: SystemMetrics? = null,
     val stackCount: Int = 0,
+    val agentVersion: String? = null,
 )
 
 data class ServerListState(
@@ -88,7 +89,7 @@ class ServerListViewModel(
                 if (status.online) {
                     webSocketManager.getOrCreateClient(status.server)?.let { client ->
                         client.connect()
-                        client.subscribeMetrics()
+                        client.subscribeMetrics(intervalSeconds = 1)
                     }
                 }
             }
@@ -100,11 +101,13 @@ class ServerListViewModel(
             val api = ApiProvider.forServer(server, token)
             val metrics = api.systemMetrics()
             val stacks = api.listStacks()
+            val agentInfo = api.agentInfo()
             ServerStatus(
                 server = server,
                 online = true,
                 metrics = metrics,
                 stackCount = stacks.stacks.size,
+                agentVersion = agentInfo.version,
             )
         } catch (_: Exception) {
             ServerStatus(server = server, online = false)

@@ -18,7 +18,7 @@ import (
 	"github.com/driversti/hola/internal/ws"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 func main() {
 	token := flag.String("token", "", "Bearer token for API authentication")
