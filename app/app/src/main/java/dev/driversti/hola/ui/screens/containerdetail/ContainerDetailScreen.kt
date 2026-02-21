@@ -1,13 +1,24 @@
 package dev.driversti.hola.ui.screens.containerdetail
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -15,8 +26,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -24,6 +37,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,8 +52,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -47,10 +66,13 @@ import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.driversti.hola.data.api.ConnectionState
 import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 import dev.driversti.hola.ui.BiometricHelper
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +96,7 @@ fun ContainerDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(state.message, state.error) {
         val msg = state.message ?: state.error
@@ -83,10 +106,25 @@ fun ContainerDetailScreen(
         }
     }
 
-    // Auto-scroll to bottom when logs update
-    LaunchedEffect(state.logs.size) {
-        if (state.logs.isNotEmpty()) {
+    // Auto-scroll to bottom when logs update (only when following)
+    LaunchedEffect(state.logs.size, state.isFollowing) {
+        if (state.isFollowing && state.logs.isNotEmpty()) {
             listState.animateScrollToItem(state.logs.size - 1)
+        }
+    }
+
+    // Auto-toggle follow based on scroll position
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisible >= info.totalItemsCount - 2
+        }.distinctUntilChanged().collect { atBottom ->
+            if (!atBottom && state.isFollowing) {
+                viewModel.setFollowing(false)
+            } else if (atBottom && !state.isFollowing) {
+                viewModel.setFollowing(true)
+            }
         }
     }
 
@@ -110,6 +148,31 @@ fun ContainerDetailScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            AnimatedVisibility(
+                visible = !state.isFollowing && state.logs.isNotEmpty(),
+                enter = fadeIn() + slideInVertically { it },
+                exit = fadeOut() + slideOutVertically { it },
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        viewModel.setFollowing(true)
+                        coroutineScope.launch {
+                            if (state.logs.isNotEmpty()) {
+                                listState.animateScrollToItem(state.logs.size - 1)
+                            }
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp),
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Jump to latest",
+                    )
+                }
+            }
+        },
     ) { padding ->
         LazyColumn(
             state = listState,
@@ -200,18 +263,32 @@ fun ContainerDetailScreen(
                 }
             }
 
-            // Logs header
+            // Logs header with live indicator
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "Logs (last 100 lines)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Logs",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        when (state.connectionState) {
+                            ConnectionState.CONNECTED -> LiveIndicator()
+                            ConnectionState.CONNECTING -> Text(
+                                "Connecting...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            ConnectionState.DISCONNECTED -> {}
+                        }
+                    }
                     if (state.isLoadingLogs) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp))
                     }
@@ -258,6 +335,38 @@ fun ContainerDetailScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LiveIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "live")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulse",
+    )
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.alpha(alpha),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(Color(0xFF4CAF50), CircleShape),
+        )
+        Text(
+            "LIVE",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF4CAF50),
+        )
     }
 }
 

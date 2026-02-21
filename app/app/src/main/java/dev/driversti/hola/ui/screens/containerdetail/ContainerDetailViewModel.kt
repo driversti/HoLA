@@ -3,6 +3,7 @@ package dev.driversti.hola.ui.screens.containerdetail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.driversti.hola.data.api.ApiProvider
+import dev.driversti.hola.data.api.ConnectionState
 import dev.driversti.hola.data.api.HolaApi
 import dev.driversti.hola.data.api.WebSocketClient
 import dev.driversti.hola.data.api.WebSocketManager
@@ -24,6 +25,9 @@ data class ContainerDetailState(
     val actionInProgress: String? = null,
     val message: String? = null,
     val error: String? = null,
+    val isStreaming: Boolean = false,
+    val isFollowing: Boolean = true,
+    val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
 )
 
 class ContainerDetailViewModel(
@@ -40,6 +44,11 @@ class ContainerDetailViewModel(
     private var api: HolaApi? = null
     private var stackName: String? = null
     private var wsClient: WebSocketClient? = null
+    private var lastRestTimestamp: String? = null
+
+    companion object {
+        private const val MAX_LOG_ENTRIES = 1000
+    }
 
     init {
         load()
@@ -48,18 +57,40 @@ class ContainerDetailViewModel(
 
     fun refreshLogs() = loadLogs()
 
+    fun setFollowing(following: Boolean) {
+        _state.value = _state.value.copy(isFollowing = following)
+    }
+
     private fun observeLogs() {
         viewModelScope.launch {
             webSocketManager.logsFlow.collect { logLine ->
                 if (logLine.containerId == containerId) {
+                    val cutoff = lastRestTimestamp
+                    if (cutoff != null && logLine.timestamp <= cutoff) return@collect
+
                     val entry = LogEntry(
                         timestamp = logLine.timestamp,
                         stream = logLine.stream,
                         message = logLine.message,
                     )
                     val current = _state.value
-                    _state.value = current.copy(logs = current.logs + entry)
+                    val updated = (current.logs + entry).let {
+                        if (it.size > MAX_LOG_ENTRIES) it.drop(it.size - MAX_LOG_ENTRIES) else it
+                    }
+                    _state.value = current.copy(logs = updated)
                 }
+            }
+        }
+    }
+
+    private fun observeConnectionState() {
+        val client = wsClient ?: return
+        viewModelScope.launch {
+            client.connectionState.collect { connState ->
+                _state.value = _state.value.copy(
+                    connectionState = connState,
+                    isStreaming = connState == ConnectionState.CONNECTED,
+                )
             }
         }
     }
@@ -94,6 +125,7 @@ class ContainerDetailViewModel(
 
                 loadLogs()
                 subscribeToLogStream(server)
+                observeConnectionState()
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -116,6 +148,7 @@ class ContainerDetailViewModel(
             _state.value = _state.value.copy(isLoadingLogs = true)
             try {
                 val logsResponse = client.containerLogs(containerId, lines = 100)
+                lastRestTimestamp = logsResponse.lines.lastOrNull()?.timestamp
                 _state.value = _state.value.copy(
                     logs = logsResponse.lines,
                     isLoadingLogs = false,

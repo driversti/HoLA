@@ -34,7 +34,7 @@
 | 7 | Multi-container log view | `idea` | M | Interleaved, color-coded logs from all containers in a stack — essential for debugging service interactions. |
 | 8 | Per-container resource usage | `planned` | M | CPU/RAM per container via `docker stats`. See which container is consuming resources. |
 | 9 | Container detail inspector | `idea` | S | Show ports, mounts, networks, environment variables (secrets masked), labels, and health status. |
-| 10 | Real-time log streaming (app) | `in-progress` | M | WebSocket-based live tail in the Android app. Agent infrastructure already exists — app needs to consume it. |
+| 10 | Real-time log streaming (app) | `done` | M | WebSocket-based live tail in the Android app. Live indicator, pause/follow, buffer cap, dedup. |
 | 11 | Log export & share | `idea` | S | Copy logs to clipboard or share via Android share sheet for pasting into chats or issue trackers. |
 
 ## 3. Routine Maintenance
@@ -82,8 +82,8 @@
 
 | Status | Count |
 |--------|-------|
-| `done` | 0 |
-| `in-progress` | 1 |
+| `done` | 1 |
+| `in-progress` | 0 |
 | `planned` | 7 |
 | `idea` | 22 |
 | **Total** | **30** |
