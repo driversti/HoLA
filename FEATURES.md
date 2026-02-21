@@ -43,7 +43,7 @@
 |---|---------|--------|--------|-------------|
 | 12 | Image update checker | `idea` | L | Compare running image digest vs registry latest. Show "3 stacks have updates available." The #1 maintenance pain in homelabs. |
 | 13 | Batch operations | `idea` | M | Select multiple stacks across a server — pull all, restart selected. Reduces repetitive tapping. |
-| 14 | Agent self-update | `planned` | M | Agent checks GitHub Releases for new versions, downloads and replaces itself, restarts via systemd. |
+| 14 | Agent self-update | `done` | M | Agent checks GitHub Releases for new versions, downloads and replaces itself, restarts via systemd. |
 | 15 | Compose file backup & export | `idea` | S | Download all compose files from a server as a zip — peace of mind before making changes. |
 | 16 | Quick actions | `idea` | S | One-tap shortcuts from home screen: "pull all stacks", "health check all servers". |
 
