@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 import dev.driversti.hola.ui.BiometricHelper
@@ -58,12 +59,13 @@ fun ContainerDetailScreen(
     containerId: String,
     serverRepository: ServerRepository,
     tokenRepository: TokenRepository,
+    webSocketManager: WebSocketManager,
     onBack: () -> Unit,
     viewModel: ContainerDetailViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                return ContainerDetailViewModel(serverId, containerId, serverRepository, tokenRepository) as T
+                return ContainerDetailViewModel(serverId, containerId, serverRepository, tokenRepository, webSocketManager) as T
             }
         }
     ),

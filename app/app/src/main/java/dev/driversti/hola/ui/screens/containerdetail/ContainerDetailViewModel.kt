@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.driversti.hola.data.api.ApiProvider
 import dev.driversti.hola.data.api.HolaApi
+import dev.driversti.hola.data.api.WebSocketClient
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.ContainerInfo
 import dev.driversti.hola.data.model.LogEntry
+import dev.driversti.hola.data.model.ServerConfig
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +31,7 @@ class ContainerDetailViewModel(
     private val containerId: String,
     private val serverRepository: ServerRepository,
     private val tokenRepository: TokenRepository,
+    private val webSocketManager: WebSocketManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ContainerDetailState())
@@ -35,12 +39,30 @@ class ContainerDetailViewModel(
 
     private var api: HolaApi? = null
     private var stackName: String? = null
+    private var wsClient: WebSocketClient? = null
 
     init {
         load()
+        observeLogs()
     }
 
     fun refreshLogs() = loadLogs()
+
+    private fun observeLogs() {
+        viewModelScope.launch {
+            webSocketManager.logsFlow.collect { logLine ->
+                if (logLine.containerId == containerId) {
+                    val entry = LogEntry(
+                        timestamp = logLine.timestamp,
+                        stream = logLine.stream,
+                        message = logLine.message,
+                    )
+                    val current = _state.value
+                    _state.value = current.copy(logs = current.logs + entry)
+                }
+            }
+        }
+    }
 
     private fun load() {
         viewModelScope.launch {
@@ -71,6 +93,7 @@ class ContainerDetailViewModel(
                 )
 
                 loadLogs()
+                subscribeToLogStream(server)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -78,6 +101,13 @@ class ContainerDetailViewModel(
                 )
             }
         }
+    }
+
+    private fun subscribeToLogStream(server: ServerConfig) {
+        val client = webSocketManager.getOrCreateClient(server) ?: return
+        wsClient = client
+        client.connect()
+        client.subscribeLogs(containerId)
     }
 
     private fun loadLogs() {
@@ -125,5 +155,10 @@ class ContainerDetailViewModel(
 
     fun clearMessage() {
         _state.value = _state.value.copy(message = null, error = null)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        wsClient?.unsubscribeLogs(containerId)
     }
 }

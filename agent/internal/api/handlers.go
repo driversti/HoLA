@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -8,17 +9,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/driversti/hola/internal/api/respond"
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/metrics"
+	"github.com/driversti/hola/internal/registry"
 )
 
 type handlers struct {
-	version string
-	docker  *docker.Client
+	version  string
+	docker   *docker.Client
+	registry *registry.Store
 }
 
 // --- System endpoints ---
@@ -66,6 +70,30 @@ func (h *handlers) listStacks(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, "failed to list stacks", "DOCKER_ERROR")
 		return
 	}
+
+	// Merge with registry: enrich discovered stacks + add downed registered stacks.
+	byName := make(map[string]int, len(stacks))
+	for i := range stacks {
+		byName[stacks[i].Name] = i
+	}
+
+	for _, rs := range h.registry.All() {
+		if idx, ok := byName[rs.Name]; ok {
+			stacks[idx].Registered = true
+		} else {
+			stacks = append(stacks, docker.Stack{
+				Name:       rs.Name,
+				Status:     "down",
+				WorkingDir: rs.WorkingDir,
+				Registered: true,
+			})
+		}
+	}
+
+	sort.Slice(stacks, func(i, j int) bool {
+		return stacks[i].Name < stacks[j].Name
+	})
+
 	respond.JSON(w, http.StatusOK, map[string]any{"stacks": stacks})
 }
 
@@ -74,6 +102,16 @@ func (h *handlers) getStack(w http.ResponseWriter, r *http.Request) {
 	detail, err := h.docker.GetStack(r.Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
+			// Fall back to registry for downed registered stacks.
+			if rs := h.registry.Get(name); rs != nil {
+				respond.JSON(w, http.StatusOK, docker.StackDetail{
+					Name:       rs.Name,
+					Status:     "down",
+					WorkingDir: rs.WorkingDir,
+					Containers: []docker.ContainerInfo{},
+				})
+				return
+			}
 			respond.Error(w, http.StatusNotFound, err.Error(), "STACK_NOT_FOUND")
 			return
 		}
@@ -89,6 +127,14 @@ func (h *handlers) getComposeFile(w http.ResponseWriter, r *http.Request) {
 	cf, err := h.docker.GetComposeFile(r.Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
+			// Fall back to registry for downed registered stacks.
+			if rs := h.registry.Get(name); rs != nil {
+				cf2, err2 := h.docker.GetComposeFileFromDir(rs.WorkingDir)
+				if err2 == nil {
+					respond.JSON(w, http.StatusOK, cf2)
+					return
+				}
+			}
 			respond.Error(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
 			return
 		}
@@ -136,16 +182,25 @@ func (h *handlers) stackAction(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	action := parts[len(parts)-1]
 
-	// Resolve working directory from the stack
+	// Resolve working directory from the stack (or registry for downed stacks).
 	detail, err := h.docker.GetStack(r.Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			respond.Error(w, http.StatusNotFound, err.Error(), "STACK_NOT_FOUND")
+			if rs := h.registry.Get(name); rs != nil {
+				detail = &docker.StackDetail{
+					Name:       rs.Name,
+					Status:     "down",
+					WorkingDir: rs.WorkingDir,
+				}
+			} else {
+				respond.Error(w, http.StatusNotFound, err.Error(), "STACK_NOT_FOUND")
+				return
+			}
+		} else {
+			slog.Error("failed to get stack for action", "name", name, "error", err)
+			respond.Error(w, http.StatusInternalServerError, "failed to get stack", "DOCKER_ERROR")
 			return
 		}
-		slog.Error("failed to get stack for action", "name", name, "error", err)
-		respond.Error(w, http.StatusInternalServerError, "failed to get stack", "DOCKER_ERROR")
-		return
 	}
 
 	var args []string
@@ -230,6 +285,127 @@ func (h *handlers) containerAction(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Container %s %s successfully", containerID, actionPastTense(action)),
+	})
+}
+
+// --- Filesystem browse ---
+
+type fsEntry struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	IsDir          bool   `json:"is_dir"`
+	HasComposeFile bool   `json:"has_compose_file"`
+}
+
+func (h *handlers) browsePath(w http.ResponseWriter, r *http.Request) {
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" {
+		reqPath = "/"
+	}
+
+	cleanPath := filepath.Clean(reqPath)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	dirEntries, err := os.ReadDir(cleanPath)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Sprintf("cannot read path: %s", err), "BAD_REQUEST")
+		return
+	}
+
+	entries := make([]fsEntry, 0, len(dirEntries))
+	for _, de := range dirEntries {
+		name := de.Name()
+		// Skip hidden entries (dot-prefixed).
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		fullPath := filepath.Join(cleanPath, name)
+		entry := fsEntry{
+			Name:  name,
+			Path:  fullPath,
+			IsDir: de.IsDir(),
+		}
+
+		if de.IsDir() {
+			entry.HasComposeFile = findComposeFile(fullPath) != ""
+		}
+
+		entries = append(entries, entry)
+	}
+
+	// Sort: directories first, then alphabetical.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		return entries[i].Name < entries[j].Name
+	})
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"path":    cleanPath,
+		"parent":  filepath.Dir(cleanPath),
+		"entries": entries,
+	})
+}
+
+// --- Stack registration ---
+
+func (h *handlers) registerStack(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid JSON body", "BAD_REQUEST")
+		return
+	}
+
+	cleanPath := filepath.Clean(body.Path)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	composeFile := findComposeFile(cleanPath)
+	if composeFile == "" {
+		respond.Error(w, http.StatusBadRequest, "no compose file found in "+cleanPath, "NO_COMPOSE_FILE")
+		return
+	}
+
+	name := filepath.Base(cleanPath)
+	if err := h.registry.Register(name, cleanPath, composeFile); err != nil {
+		slog.Error("failed to register stack", "name", name, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to register stack", "REGISTRY_ERROR")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"name":    name,
+		"message": fmt.Sprintf("Stack '%s' registered", name),
+	})
+}
+
+func (h *handlers) unregisterStack(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	if h.registry.Get(name) == nil {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("stack %q is not registered", name), "NOT_FOUND")
+		return
+	}
+
+	if err := h.registry.Unregister(name); err != nil {
+		slog.Error("failed to unregister stack", "name", name, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to unregister stack", "REGISTRY_ERROR")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Stack '%s' unregistered", name),
 	})
 }
 

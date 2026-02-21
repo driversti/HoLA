@@ -5,12 +5,14 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.SettingsRepository
 import dev.driversti.hola.data.repository.TokenRepository
 import dev.driversti.hola.ui.screens.addserver.AddServerScreen
 import dev.driversti.hola.ui.screens.composeviewer.ComposeViewerScreen
 import dev.driversti.hola.ui.screens.containerdetail.ContainerDetailScreen
+import dev.driversti.hola.ui.screens.filebrowser.FileBrowserScreen
 import dev.driversti.hola.ui.screens.serverdetail.ServerDetailScreen
 import dev.driversti.hola.ui.screens.serverlist.ServerListScreen
 import dev.driversti.hola.ui.screens.settings.SettingsScreen
@@ -22,12 +24,14 @@ fun HolaNavGraph(
     serverRepository: ServerRepository,
     tokenRepository: TokenRepository,
     settingsRepository: SettingsRepository,
+    webSocketManager: WebSocketManager,
 ) {
     NavHost(navController = navController, startDestination = ServerList) {
         composable<ServerList> {
             ServerListScreen(
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
+                webSocketManager = webSocketManager,
                 onServerClick = { serverId ->
                     navController.navigate(ServerDetail(serverId))
                 },
@@ -52,9 +56,23 @@ fun HolaNavGraph(
                 serverId = route.serverId,
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
+                webSocketManager = webSocketManager,
                 onStackClick = { stackName ->
                     navController.navigate(StackDetail(route.serverId, stackName))
                 },
+                onAddStack = {
+                    navController.navigate(FileBrowser(route.serverId))
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable<FileBrowser> { backStack ->
+            val route = backStack.toRoute<FileBrowser>()
+            FileBrowserScreen(
+                serverId = route.serverId,
+                serverRepository = serverRepository,
+                tokenRepository = tokenRepository,
                 onBack = { navController.popBackStack() },
             )
         }
@@ -66,6 +84,7 @@ fun HolaNavGraph(
                 stackName = route.stackName,
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
+                webSocketManager = webSocketManager,
                 onContainerClick = { containerId ->
                     navController.navigate(ContainerDetail(route.serverId, containerId))
                 },
@@ -83,6 +102,7 @@ fun HolaNavGraph(
                 containerId = route.containerId,
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
+                webSocketManager = webSocketManager,
                 onBack = { navController.popBackStack() },
             )
         }

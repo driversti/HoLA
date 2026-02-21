@@ -14,6 +14,8 @@ import (
 	"github.com/driversti/hola/internal/api"
 	"github.com/driversti/hola/internal/auth"
 	"github.com/driversti/hola/internal/docker"
+	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/ws"
 )
 
 const version = "0.1.0"
@@ -40,14 +42,30 @@ func main() {
 	}
 	defer dockerClient.Close()
 
+	registryStore, err := registry.NewStore("")
+	if err != nil {
+		slog.Error("failed to init registry store", "error", err)
+		os.Exit(1)
+	}
+
+	// WebSocket event hub — listens for Docker container events.
+	eventHub := ws.NewEventHub(dockerClient)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go eventHub.Run(ctx)
+
+	wsHandler := ws.NewHandler(eventHub)
 	authMiddleware := auth.NewMiddleware(*token)
-	router := api.NewRouter(version, authMiddleware, dockerClient)
+	router := api.NewRouter(version, authMiddleware, dockerClient, wsHandler, registryStore)
 
 	srv := &http.Server{
-		Addr:         ":8420",
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:    ":8420",
+		Handler: router,
+		// ReadHeaderTimeout (not ReadTimeout) protects HTTP header parsing
+		// without killing long-lived WebSocket connections.
+		ReadHeaderTimeout: 10 * time.Second,
+		// WriteTimeout must be 0 for WebSocket connections to stay alive.
+		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -64,10 +82,12 @@ func main() {
 	sig := <-quit
 	slog.Info("shutting down", "signal", sig.String())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	cancel() // Stop event hub.
 
-	if err := srv.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("forced shutdown", "error", err)
 		os.Exit(1)
 	}

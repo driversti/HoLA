@@ -3,6 +3,7 @@ package dev.driversti.hola.ui.screens.serverlist
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.driversti.hola.data.api.ApiProvider
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.ServerConfig
 import dev.driversti.hola.data.model.SystemMetrics
 import dev.driversti.hola.data.repository.ServerRepository
@@ -30,6 +31,7 @@ data class ServerListState(
 class ServerListViewModel(
     private val serverRepository: ServerRepository,
     private val tokenRepository: TokenRepository,
+    private val webSocketManager: WebSocketManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ServerListState())
@@ -37,6 +39,7 @@ class ServerListViewModel(
 
     init {
         observeServers()
+        observeMetrics()
     }
 
     fun refresh() {
@@ -47,6 +50,22 @@ class ServerListViewModel(
         viewModelScope.launch {
             serverRepository.servers.collectLatest { servers ->
                 fetchStatuses(servers)
+            }
+        }
+    }
+
+    private fun observeMetrics() {
+        viewModelScope.launch {
+            webSocketManager.metricsFlow.collect { (serverId, metrics) ->
+                val current = _state.value
+                val updated = current.servers.map { status ->
+                    if (status.server.id == serverId) {
+                        status.copy(metrics = metrics, online = true)
+                    } else {
+                        status
+                    }
+                }
+                _state.value = current.copy(servers = updated)
             }
         }
     }
@@ -63,6 +82,16 @@ class ServerListViewModel(
             }.awaitAll()
 
             _state.value = ServerListState(servers = statuses, isLoading = false)
+
+            // Subscribe to live metrics for each online server.
+            for (status in statuses) {
+                if (status.online) {
+                    webSocketManager.getOrCreateClient(status.server)?.let { client ->
+                        client.connect()
+                        client.subscribeMetrics()
+                    }
+                }
+            }
         }
     }
 

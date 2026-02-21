@@ -21,4 +21,7 @@ data class ContainerDetail(val serverId: String, val containerId: String)
 data class ComposeViewer(val serverId: String, val stackName: String)
 
 @Serializable
+data class FileBrowser(val serverId: String)
+
+@Serializable
 object Settings

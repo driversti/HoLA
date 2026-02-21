@@ -2,7 +2,7 @@
 .worktrees/
 
 # Go
-agent/hola-agent
+agent/hola-agent*
 agent/agent
 
 # Android

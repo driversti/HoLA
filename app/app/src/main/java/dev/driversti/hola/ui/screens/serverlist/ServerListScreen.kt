@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 
@@ -47,6 +48,7 @@ import dev.driversti.hola.data.repository.TokenRepository
 fun ServerListScreen(
     serverRepository: ServerRepository,
     tokenRepository: TokenRepository,
+    webSocketManager: WebSocketManager,
     onServerClick: (String) -> Unit,
     onAddServer: () -> Unit,
     onSettings: () -> Unit,
@@ -54,7 +56,7 @@ fun ServerListScreen(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                return ServerListViewModel(serverRepository, tokenRepository) as T
+                return ServerListViewModel(serverRepository, tokenRepository, webSocketManager) as T
             }
         }
     ),

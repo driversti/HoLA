@@ -60,9 +60,10 @@ data class StackListResponse(val stacks: List<Stack>)
 data class Stack(
     val name: String,
     val status: String,
-    @SerialName("service_count") val serviceCount: Int,
-    @SerialName("running_count") val runningCount: Int,
-    @SerialName("working_dir") val workingDir: String,
+    @SerialName("service_count") val serviceCount: Int = 0,
+    @SerialName("running_count") val runningCount: Int = 0,
+    @SerialName("working_dir") val workingDir: String = "",
+    val registered: Boolean = false,
 )
 
 @Serializable
@@ -116,6 +117,26 @@ data class ActionResponse(
     val message: String? = null,
     val error: String? = null,
 )
+
+// --- Filesystem Browse ---
+
+@Serializable
+data class BrowseResponse(
+    val path: String,
+    val parent: String,
+    val entries: List<FsEntry>,
+)
+
+@Serializable
+data class FsEntry(
+    val name: String,
+    val path: String,
+    @SerialName("is_dir") val isDir: Boolean,
+    @SerialName("has_compose_file") val hasComposeFile: Boolean = false,
+)
+
+@Serializable
+data class RegisterStackRequest(val path: String)
 
 // --- Error ---
 

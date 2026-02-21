@@ -16,9 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.Stack
 import dev.driversti.hola.data.model.SystemMetrics
 import dev.driversti.hola.data.repository.ServerRepository
@@ -52,13 +55,15 @@ fun ServerDetailScreen(
     serverId: String,
     serverRepository: ServerRepository,
     tokenRepository: TokenRepository,
+    webSocketManager: WebSocketManager,
     onStackClick: (String) -> Unit,
+    onAddStack: () -> Unit,
     onBack: () -> Unit,
     viewModel: ServerDetailViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                return ServerDetailViewModel(serverId, serverRepository, tokenRepository) as T
+                return ServerDetailViewModel(serverId, serverRepository, tokenRepository, webSocketManager) as T
             }
         }
     ),
@@ -82,6 +87,11 @@ fun ServerDetailScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onAddStack) {
+                Icon(Icons.Default.Add, contentDescription = "Add stack")
+            }
+        },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.isLoading,
@@ -180,6 +190,7 @@ private fun StackCard(stack: Stack, onClick: () -> Unit) {
             val dotColor = when (stack.status) {
                 "running" -> Color(0xFF4CAF50)
                 "partial" -> Color(0xFFFFC107)
+                "down" -> Color(0xFF9E9E9E)
                 else -> Color(0xFFF44336)
             }
             androidx.compose.foundation.Canvas(modifier = Modifier.size(12.dp)) {

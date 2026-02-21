@@ -2,12 +2,16 @@ package dev.driversti.hola.data.api
 
 import dev.driversti.hola.data.model.ActionResponse
 import dev.driversti.hola.data.model.AgentInfo
+import dev.driversti.hola.data.model.BrowseResponse
 import dev.driversti.hola.data.model.ComposeFileResponse
 import dev.driversti.hola.data.model.ContainerLogsResponse
 import dev.driversti.hola.data.model.HealthResponse
+import dev.driversti.hola.data.model.RegisterStackRequest
 import dev.driversti.hola.data.model.StackDetail
 import dev.driversti.hola.data.model.StackListResponse
 import dev.driversti.hola.data.model.SystemMetrics
+import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -24,6 +28,9 @@ interface HolaApi {
     @GET("api/v1/system/metrics")
     suspend fun systemMetrics(): SystemMetrics
 
+    @GET("api/v1/fs/browse")
+    suspend fun browsePath(@Query("path") path: String = "/"): BrowseResponse
+
     @GET("api/v1/stacks")
     suspend fun listStacks(): StackListResponse
 
@@ -32,6 +39,12 @@ interface HolaApi {
 
     @GET("api/v1/stacks/{name}/compose")
     suspend fun getComposeFile(@Path("name") name: String): ComposeFileResponse
+
+    @POST("api/v1/stacks/register")
+    suspend fun registerStack(@Body request: RegisterStackRequest): ActionResponse
+
+    @DELETE("api/v1/stacks/{name}/unregister")
+    suspend fun unregisterStack(@Path("name") name: String): ActionResponse
 
     @POST("api/v1/stacks/{name}/start")
     suspend fun startStack(@Path("name") name: String): ActionResponse

@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
 
@@ -51,6 +53,7 @@ type Stack struct {
 	ServiceCount int    `json:"service_count"`
 	RunningCount int    `json:"running_count"`
 	WorkingDir   string `json:"working_dir"`
+	Registered   bool   `json:"registered"`
 }
 
 // StackDetail includes the container list for a stack.
@@ -223,6 +226,34 @@ func (c *Client) GetComposeFile(ctx context.Context, stackName string) (*Compose
 	return nil, fmt.Errorf("compose file not found in %s", detail.WorkingDir)
 }
 
+// GetComposeFileFromDir reads the compose file from a given directory
+// without requiring a running stack.
+func (c *Client) GetComposeFileFromDir(workingDir string) (*ComposeFile, error) {
+	if workingDir == "" {
+		return nil, fmt.Errorf("working directory is empty")
+	}
+
+	candidates := []string{
+		"docker-compose.yml",
+		"docker-compose.yaml",
+		"compose.yml",
+		"compose.yaml",
+	}
+
+	for _, name := range candidates {
+		path := filepath.Join(workingDir, name)
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return &ComposeFile{
+				Content: string(data),
+				Path:    path,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("compose file not found in %s", workingDir)
+}
+
 // ContainerLogs returns the last N lines of logs for a container.
 type LogEntry struct {
 	Timestamp string `json:"timestamp"`
@@ -330,6 +361,29 @@ func (c *Client) StopContainer(ctx context.Context, containerID string) error {
 // RestartContainer restarts a container.
 func (c *Client) RestartContainer(ctx context.Context, containerID string) error {
 	return c.cli.ContainerRestart(ctx, containerID, container.StopOptions{})
+}
+
+// Events returns channels for Docker container events.
+func (c *Client) Events(ctx context.Context) (<-chan events.Message, <-chan error) {
+	return c.cli.Events(ctx, events.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("type", "container")),
+	})
+}
+
+// StreamContainerLogs returns a streaming reader for a container's logs.
+// The caller is responsible for closing the returned reader.
+func (c *Client) StreamContainerLogs(ctx context.Context, containerID string, tail string) (io.ReadCloser, error) {
+	if tail == "" {
+		tail = "50"
+	}
+
+	return c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Timestamps: true,
+		Follow:     true,
+		Tail:       tail,
+	})
 }
 
 func stackStatus(serviceCount, runningCount int) string {

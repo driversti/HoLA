@@ -9,14 +9,18 @@ import (
 
 	"github.com/driversti/hola/internal/api"
 	"github.com/driversti/hola/internal/auth"
+	"github.com/driversti/hola/internal/registry"
+	"github.com/driversti/hola/internal/ws"
 )
 
-func newTestRouter() http.Handler {
-	return api.NewRouter("0.1.0-test", auth.NewMiddleware("test-token"), nil)
+func newTestRouter(t *testing.T) http.Handler {
+	t.Helper()
+	store, _ := registry.NewStore(t.TempDir())
+	return api.NewRouter("0.1.0-test", auth.NewMiddleware("test-token"), nil, ws.NewHandler(nil), store)
 }
 
 func TestHealthEndpoint(t *testing.T) {
-	srv := httptest.NewServer(newTestRouter())
+	srv := httptest.NewServer(newTestRouter(t))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/health")
@@ -37,7 +41,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestAgentInfoRequiresAuth(t *testing.T) {
-	srv := httptest.NewServer(newTestRouter())
+	srv := httptest.NewServer(newTestRouter(t))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/agent/info")
@@ -52,7 +56,7 @@ func TestAgentInfoRequiresAuth(t *testing.T) {
 }
 
 func TestAgentInfoWithAuth(t *testing.T) {
-	srv := httptest.NewServer(newTestRouter())
+	srv := httptest.NewServer(newTestRouter(t))
 	defer srv.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/agent/info", nil)
