@@ -391,6 +391,17 @@ func (c *Client) StreamContainerLogs(ctx context.Context, containerID string, ta
 	})
 }
 
+// ContainerStats returns a streaming reader for a container's resource stats.
+// The caller is responsible for closing the returned reader.
+// Each read yields a JSON object matching types.StatsJSON.
+func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	resp, err := c.cli.ContainerStats(ctx, containerID, true)
+	if err != nil {
+		return nil, fmt.Errorf("container stats: %w", err)
+	}
+	return resp.Body, nil
+}
+
 // --- Docker resource management ---
 
 // DiskUsage returns an aggregated summary of Docker resource usage.

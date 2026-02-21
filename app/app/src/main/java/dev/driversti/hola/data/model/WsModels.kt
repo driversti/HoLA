@@ -35,3 +35,14 @@ data class WsLogLine(
     val stream: String,
     val message: String,
 )
+
+// --- Container Stats (from container_stats stream) ---
+
+@Serializable
+data class WsContainerStats(
+    @SerialName("container_id") val containerId: String,
+    @SerialName("cpu_percent") val cpuPercent: Float,
+    @SerialName("mem_used_bytes") val memUsedBytes: Long,
+    @SerialName("mem_limit_bytes") val memLimitBytes: Long,
+    @SerialName("mem_percent") val memPercent: Float,
+)

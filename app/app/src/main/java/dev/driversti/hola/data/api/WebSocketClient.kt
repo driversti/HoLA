@@ -146,6 +146,33 @@ class WebSocketClient(
         }
     }
 
+    fun subscribeContainerStats(containerId: String) {
+        val key = SubscriptionKey("container_stats", containerId)
+        if (activeSubscriptions.add(key)) {
+            send(WsMessage(
+                type = "subscribe",
+                payload = buildJsonObject {
+                    put("stream", "container_stats")
+                    put("container_id", containerId)
+                    put("interval_seconds", 3)
+                },
+            ))
+        }
+    }
+
+    fun unsubscribeContainerStats(containerId: String) {
+        val key = SubscriptionKey("container_stats", containerId)
+        if (activeSubscriptions.remove(key)) {
+            send(WsMessage(
+                type = "unsubscribe",
+                payload = buildJsonObject {
+                    put("stream", "container_stats")
+                    put("container_id", containerId)
+                },
+            ))
+        }
+    }
+
     fun send(message: WsMessage) {
         val text = json.encodeToString(message)
         webSocket?.send(text) ?: Log.w(tag, "send called but WebSocket not connected")

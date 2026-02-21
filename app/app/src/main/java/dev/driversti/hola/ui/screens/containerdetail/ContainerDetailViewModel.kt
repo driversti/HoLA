@@ -28,6 +28,10 @@ data class ContainerDetailState(
     val isStreaming: Boolean = false,
     val isFollowing: Boolean = true,
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
+    val cpuPercent: Float? = null,
+    val memUsedBytes: Long? = null,
+    val memLimitBytes: Long? = null,
+    val memPercent: Float? = null,
 )
 
 class ContainerDetailViewModel(
@@ -53,6 +57,7 @@ class ContainerDetailViewModel(
     init {
         load()
         observeLogs()
+        observeContainerStats()
     }
 
     fun refreshLogs() = loadLogs()
@@ -78,6 +83,21 @@ class ContainerDetailViewModel(
                         if (it.size > MAX_LOG_ENTRIES) it.drop(it.size - MAX_LOG_ENTRIES) else it
                     }
                     _state.value = current.copy(logs = updated)
+                }
+            }
+        }
+    }
+
+    private fun observeContainerStats() {
+        viewModelScope.launch {
+            webSocketManager.containerStatsFlow.collect { stats ->
+                if (stats.containerId == containerId) {
+                    _state.value = _state.value.copy(
+                        cpuPercent = stats.cpuPercent,
+                        memUsedBytes = stats.memUsedBytes,
+                        memLimitBytes = stats.memLimitBytes,
+                        memPercent = stats.memPercent,
+                    )
                 }
             }
         }
@@ -140,6 +160,7 @@ class ContainerDetailViewModel(
         wsClient = client
         client.connect()
         client.subscribeLogs(containerId)
+        client.subscribeContainerStats(containerId)
     }
 
     private fun loadLogs() {
@@ -193,5 +214,6 @@ class ContainerDetailViewModel(
     override fun onCleared() {
         super.onCleared()
         wsClient?.unsubscribeLogs(containerId)
+        wsClient?.unsubscribeContainerStats(containerId)
     }
 }

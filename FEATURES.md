@@ -32,7 +32,7 @@
 |---|---------|--------|--------|-------------|
 | 6 | Log search & filter | `idea` | S | Client-side grep-like search within fetched container logs in the app. |
 | 7 | Multi-container log view | `idea` | M | Interleaved, color-coded logs from all containers in a stack — essential for debugging service interactions. |
-| 8 | Per-container resource usage | `planned` | M | CPU/RAM per container via `docker stats`. See which container is consuming resources. |
+| 8 | Per-container resource usage | `done` | M | Real-time CPU/RAM per container via WebSocket `container_stats` stream on container detail screen. |
 | 9 | Container detail inspector | `idea` | S | Show ports, mounts, networks, environment variables (secrets masked), labels, and health status. |
 | 10 | Real-time log streaming (app) | `done` | M | WebSocket-based live tail in the Android app. Live indicator, pause/follow, buffer cap, dedup. |
 | 11 | Log export & share | `idea` | S | Copy logs to clipboard or share via Android share sheet for pasting into chats or issue trackers. |
@@ -82,8 +82,8 @@
 
 | Status | Count |
 |--------|-------|
-| `done` | 1 |
+| `done` | 2 |
 | `in-progress` | 0 |
-| `planned` | 7 |
+| `planned` | 6 |
 | `idea` | 22 |
 | **Total** | **30** |

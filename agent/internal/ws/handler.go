@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"nhooyr.io/websocket"
@@ -176,17 +177,17 @@ func (h *Handler) handleSubscribe(ctx context.Context, c *client, msg Message) {
 
 		subKey := "logs:" + payload.ContainerID
 
-		// Enforce max 3 concurrent log subscriptions.
-		logCount := 0
+		// Shared limit: count logs + container_stats subscriptions.
+		perContainerCount := 0
 		for key := range c.subscriptions {
-			if len(key) > 5 && key[:5] == "logs:" {
-				logCount++
+			if strings.HasPrefix(key, "logs:") || strings.HasPrefix(key, "container_stats:") {
+				perContainerCount++
 			}
 		}
-		if logCount >= 3 {
+		if perContainerCount >= 3 {
 			_ = c.send(ctx, Message{
 				Type:    "error",
-				Payload: mustMarshal(ErrorPayload{Error: "max 3 concurrent log subscriptions", Code: "LIMIT_EXCEEDED"}),
+				Payload: mustMarshal(ErrorPayload{Error: "max 3 concurrent per-container subscriptions", Code: "LIMIT_EXCEEDED"}),
 			})
 			return
 		}
@@ -209,6 +210,50 @@ func (h *Handler) handleSubscribe(ctx context.Context, c *client, msg Message) {
 			Payload: mustMarshal(SubscribePayload{Stream: "logs", ContainerID: payload.ContainerID}),
 		})
 
+	case "container_stats":
+		if payload.ContainerID == "" {
+			_ = c.send(ctx, Message{
+				Type:    "error",
+				Payload: mustMarshal(ErrorPayload{Error: "container_id required for container_stats stream", Code: "MISSING_CONTAINER_ID"}),
+			})
+			return
+		}
+
+		subKey := "container_stats:" + payload.ContainerID
+
+		// Shared limit: count logs + container_stats subscriptions.
+		perContainerCount := 0
+		for key := range c.subscriptions {
+			if strings.HasPrefix(key, "logs:") || strings.HasPrefix(key, "container_stats:") {
+				perContainerCount++
+			}
+		}
+		if perContainerCount >= 3 {
+			_ = c.send(ctx, Message{
+				Type:    "error",
+				Payload: mustMarshal(ErrorPayload{Error: "max 3 concurrent per-container subscriptions", Code: "LIMIT_EXCEEDED"}),
+			})
+			return
+		}
+
+		if _, exists := c.subscriptions[subKey]; exists {
+			_ = c.send(ctx, Message{
+				Type:    "error",
+				Payload: mustMarshal(ErrorPayload{Error: "already subscribed to container_stats for this container", Code: "ALREADY_SUBSCRIBED"}),
+			})
+			return
+		}
+
+		subCtx, cancel := context.WithCancel(ctx)
+		c.subscriptions[subKey] = cancel
+		go streamContainerStats(subCtx, c, h.eventHub.dockerClient, payload.ContainerID, payload.IntervalSeconds)
+
+		_ = c.send(ctx, Message{
+			Type:    "subscribed",
+			ID:      msg.ID,
+			Payload: mustMarshal(SubscribePayload{Stream: "container_stats", ContainerID: payload.ContainerID}),
+		})
+
 	default:
 		_ = c.send(ctx, Message{
 			Type:    "error",
@@ -228,8 +273,13 @@ func (h *Handler) handleUnsubscribe(ctx context.Context, c *client, msg Message)
 	}
 
 	subKey := payload.Stream
-	if payload.Stream == "logs" && payload.ContainerID != "" {
-		subKey = "logs:" + payload.ContainerID
+	if payload.ContainerID != "" {
+		switch payload.Stream {
+		case "logs":
+			subKey = "logs:" + payload.ContainerID
+		case "container_stats":
+			subKey = "container_stats:" + payload.ContainerID
+		}
 	}
 
 	cancel, exists := c.subscriptions[subKey]

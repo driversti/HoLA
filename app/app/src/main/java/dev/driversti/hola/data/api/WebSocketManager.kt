@@ -3,6 +3,7 @@ package dev.driversti.hola.data.api
 import dev.driversti.hola.data.model.ContainerEvent
 import dev.driversti.hola.data.model.ServerConfig
 import dev.driversti.hola.data.model.SystemMetrics
+import dev.driversti.hola.data.model.WsContainerStats
 import dev.driversti.hola.data.model.WsLogLine
 import dev.driversti.hola.data.model.WsMessage
 import dev.driversti.hola.data.repository.TokenRepository
@@ -37,6 +38,9 @@ class WebSocketManager(
 
     private val _logsFlow = MutableSharedFlow<WsLogLine>(extraBufferCapacity = 256)
     val logsFlow: SharedFlow<WsLogLine> = _logsFlow
+
+    private val _containerStatsFlow = MutableSharedFlow<WsContainerStats>(extraBufferCapacity = 16)
+    val containerStatsFlow: SharedFlow<WsContainerStats> = _containerStatsFlow
 
     fun getOrCreateClient(server: ServerConfig): WebSocketClient? {
         val token = tokenRepository.getToken() ?: return null
@@ -87,6 +91,11 @@ class WebSocketManager(
                 "log_line" -> {
                     val logLine = json.decodeFromString<WsLogLine>(payload.toString())
                     _logsFlow.tryEmit(logLine)
+                }
+
+                "container_stats" -> {
+                    val stats = json.decodeFromString<WsContainerStats>(payload.toString())
+                    _containerStatsFlow.tryEmit(stats)
                 }
             }
         } catch (_: Exception) {

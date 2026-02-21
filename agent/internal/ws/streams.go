@@ -3,11 +3,13 @@ package ws
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/driversti/hola/internal/docker"
 	"github.com/driversti/hola/internal/metrics"
 )
@@ -138,4 +140,133 @@ func streamLogs(ctx context.Context, c *client, dockerClient *docker.Client, con
 			return
 		}
 	}
+}
+
+// ContainerStatsPayload is the payload for per-container resource stats.
+type ContainerStatsPayload struct {
+	ContainerID   string  `json:"container_id"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemUsedBytes  uint64  `json:"mem_used_bytes"`
+	MemLimitBytes uint64  `json:"mem_limit_bytes"`
+	MemPercent    float64 `json:"mem_percent"`
+}
+
+// streamContainerStats reads Docker container stats and sends CPU/memory snapshots at a regular interval.
+func streamContainerStats(ctx context.Context, c *client, dockerClient *docker.Client, containerID string, intervalSeconds int) {
+	if intervalSeconds < 1 {
+		intervalSeconds = 3
+	}
+	if intervalSeconds > 30 {
+		intervalSeconds = 30
+	}
+
+	reader, err := dockerClient.ContainerStats(ctx, containerID)
+	if err != nil {
+		slog.Warn("container stats open failed", "container", containerID, "error", err)
+		_ = c.send(ctx, Message{
+			Type:    "error",
+			Payload: mustMarshal(ErrorPayload{Error: "failed to open stats stream: " + err.Error(), Code: "STATS_STREAM_ERROR"}),
+		})
+		return
+	}
+	defer reader.Close()
+
+	decoder := json.NewDecoder(reader)
+	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
+	defer ticker.Stop()
+
+	var latest *ContainerStatsPayload
+
+	// Read stats in a separate goroutine to avoid blocking the ticker.
+	statsCh := make(chan ContainerStatsPayload, 1)
+	go func() {
+		for {
+			var stats container.StatsResponse
+			if err := decoder.Decode(&stats); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Debug("container stats decode failed", "container", containerID, "error", err)
+				return
+			}
+
+			cpuPercent := calculateCPUPercent(&stats)
+			memUsed := stats.MemoryStats.Usage
+			if cache, ok := stats.MemoryStats.Stats["cache"]; ok {
+				memUsed -= cache
+			}
+			memLimit := stats.MemoryStats.Limit
+			var memPercent float64
+			if memLimit > 0 {
+				memPercent = float64(memUsed) / float64(memLimit) * 100.0
+			}
+
+			payload := ContainerStatsPayload{
+				ContainerID:   containerID,
+				CPUPercent:    cpuPercent,
+				MemUsedBytes:  memUsed,
+				MemLimitBytes: memLimit,
+				MemPercent:    memPercent,
+			}
+
+			// Non-blocking send — drop old value if not consumed yet.
+			select {
+			case statsCh <- payload:
+			default:
+				<-statsCh
+				statsCh <- payload
+			}
+		}
+	}()
+
+	// Send initial snapshot as soon as available.
+	select {
+	case <-ctx.Done():
+		return
+	case p := <-statsCh:
+		latest = &p
+		if err := c.send(ctx, Message{
+			Type:    "container_stats",
+			Payload: mustMarshal(p),
+		}); err != nil {
+			slog.Debug("container stats send failed", "container", containerID, "error", err)
+			return
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case p := <-statsCh:
+			latest = &p
+		case <-ticker.C:
+			if latest == nil {
+				continue
+			}
+			if err := c.send(ctx, Message{
+				Type:    "container_stats",
+				Payload: mustMarshal(*latest),
+			}); err != nil {
+				slog.Debug("container stats send failed", "container", containerID, "error", err)
+				return
+			}
+		}
+	}
+}
+
+func calculateCPUPercent(stats *container.StatsResponse) float64 {
+	cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
+	if systemDelta <= 0 || cpuDelta < 0 {
+		return 0.0
+	}
+	numCPUs := float64(stats.CPUStats.OnlineCPUs)
+	if numCPUs == 0 {
+		numCPUs = float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if numCPUs == 0 {
+		numCPUs = 1
+	}
+	return (cpuDelta / systemDelta) * numCPUs * 100.0
 }
