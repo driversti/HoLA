@@ -200,8 +200,9 @@ func (u *Updater) fetchLatestRelease(ctx context.Context) (*releaseInfo, error) 
 	return &rel, nil
 }
 
-// downloadAsset downloads a URL to a temp file in the same directory as the
-// current binary (required for os.Rename to work across filesystems).
+// downloadAsset downloads a URL to a temp file. It first tries the binary's
+// directory (ideal for same-filesystem rename), then falls back to os.TempDir()
+// if the binary directory is not writable (e.g. /usr/local/bin owned by root).
 func (u *Updater) downloadAsset(ctx context.Context, url string) (string, error) {
 	execPath, err := executablePath()
 	if err != nil {
@@ -225,9 +226,14 @@ func (u *Updater) downloadAsset(ctx context.Context, url string) (string, error)
 		return "", fmt.Errorf("download returned %d", resp.StatusCode)
 	}
 
+	// Try binary's directory first, fall back to system temp dir.
 	tmp, err := os.CreateTemp(dir, ".hola-agent-update-*")
 	if err != nil {
-		return "", fmt.Errorf("creating temp file: %w", err)
+		slog.Debug("binary dir not writable, using temp dir", "dir", dir, "error", err)
+		tmp, err = os.CreateTemp("", ".hola-agent-update-*")
+		if err != nil {
+			return "", fmt.Errorf("creating temp file: %w", err)
+		}
 	}
 	defer tmp.Close()
 
@@ -320,12 +326,16 @@ func replaceBinary(newBinaryPath string) error {
 	}
 
 	if err := os.Rename(newBinaryPath, execPath); err != nil {
-		// Attempt rollback.
-		slog.Error("install failed, rolling back", "error", err)
-		if rbErr := os.Rename(backup, execPath); rbErr != nil {
-			slog.Error("rollback also failed", "error", rbErr)
+		// Rename fails across filesystems — fall back to copy.
+		if cpErr := copyFile(newBinaryPath, execPath, info.Mode()); cpErr != nil {
+			// Both failed — attempt rollback.
+			slog.Error("install failed, rolling back", "rename_error", err, "copy_error", cpErr)
+			if rbErr := os.Rename(backup, execPath); rbErr != nil {
+				slog.Error("rollback also failed", "error", rbErr)
+			}
+			return fmt.Errorf("install new binary: %w", err)
 		}
-		return fmt.Errorf("install new binary: %w", err)
+		os.Remove(newBinaryPath)
 	}
 
 	return nil
@@ -347,4 +357,25 @@ func executablePath() (string, error) {
 // assetName returns the expected binary name for the current platform.
 func assetName() string {
 	return fmt.Sprintf("hola-agent-%s-%s", runtime.GOOS, runtime.GOARCH)
+}
+
+// copyFile copies src to dst with the given permissions.
+// Used as fallback when os.Rename fails across filesystems.
+func copyFile(src, dst string, perm os.FileMode) error {
+	in_, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in_.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in_); err != nil {
+		return err
+	}
+	return out.Close()
 }
