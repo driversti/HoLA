@@ -137,10 +137,37 @@ data class FsEntry(
     val path: String,
     @SerialName("is_dir") val isDir: Boolean,
     @SerialName("has_compose_file") val hasComposeFile: Boolean = false,
+    val size: Long = 0,
+    @SerialName("modified_at") val modifiedAt: Long = 0,
+    @SerialName("file_type") val fileType: String = "",
 )
 
 @Serializable
 data class RegisterStackRequest(val path: String)
+
+// --- Filesystem Read/Write ---
+
+@Serializable
+data class FileReadResponse(
+    val path: String,
+    val content: String,
+    val size: Long,
+)
+
+@Serializable
+data class FileWriteRequest(
+    val path: String,
+    val content: String,
+)
+
+@Serializable
+data class MkdirRequest(val path: String)
+
+@Serializable
+data class RenameRequest(
+    @SerialName("old_path") val oldPath: String,
+    @SerialName("new_path") val newPath: String,
+)
 
 // --- Docker Resources ---
 

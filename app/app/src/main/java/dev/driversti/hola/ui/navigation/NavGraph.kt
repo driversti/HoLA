@@ -12,6 +12,7 @@ import dev.driversti.hola.data.repository.TokenRepository
 import dev.driversti.hola.ui.screens.addserver.AddServerScreen
 import dev.driversti.hola.ui.screens.composeviewer.ComposeViewerScreen
 import dev.driversti.hola.ui.screens.containerdetail.ContainerDetailScreen
+import dev.driversti.hola.ui.screens.fileeditor.FileEditorScreen
 import dev.driversti.hola.ui.screens.filebrowser.FileBrowserScreen
 import dev.driversti.hola.ui.screens.resources.ResourceListScreen
 import dev.driversti.hola.ui.screens.resources.ResourcesDashboardScreen
@@ -76,6 +77,20 @@ fun HolaNavGraph(
             val route = backStack.toRoute<FileBrowser>()
             FileBrowserScreen(
                 serverId = route.serverId,
+                serverRepository = serverRepository,
+                tokenRepository = tokenRepository,
+                onBack = { navController.popBackStack() },
+                onOpenFile = { filePath ->
+                    navController.navigate(FileEditor(route.serverId, filePath))
+                },
+            )
+        }
+
+        composable<FileEditor> { backStack ->
+            val route = backStack.toRoute<FileEditor>()
+            FileEditorScreen(
+                serverId = route.serverId,
+                filePath = route.filePath,
                 serverRepository = serverRepository,
                 tokenRepository = tokenRepository,
                 onBack = { navController.popBackStack() },

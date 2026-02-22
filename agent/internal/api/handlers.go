@@ -495,6 +495,9 @@ type fsEntry struct {
 	Path           string `json:"path"`
 	IsDir          bool   `json:"is_dir"`
 	HasComposeFile bool   `json:"has_compose_file"`
+	Size           int64  `json:"size"`
+	ModifiedAt     int64  `json:"modified_at"`
+	FileType       string `json:"file_type"`
 }
 
 func (h *handlers) browsePath(w http.ResponseWriter, r *http.Request) {
@@ -518,8 +521,8 @@ func (h *handlers) browsePath(w http.ResponseWriter, r *http.Request) {
 	entries := make([]fsEntry, 0, len(dirEntries))
 	for _, de := range dirEntries {
 		name := de.Name()
-		// Skip hidden entries (dot-prefixed).
-		if strings.HasPrefix(name, ".") {
+		// Skip hidden entries (dot-prefixed) and .bak files.
+		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".bak") {
 			continue
 		}
 
@@ -528,6 +531,18 @@ func (h *handlers) browsePath(w http.ResponseWriter, r *http.Request) {
 			Name:  name,
 			Path:  fullPath,
 			IsDir: de.IsDir(),
+		}
+
+		if info, err := de.Info(); err == nil {
+			entry.Size = info.Size()
+			entry.ModifiedAt = info.ModTime().Unix()
+		}
+
+		if !de.IsDir() {
+			ext := filepath.Ext(name)
+			if ext != "" {
+				entry.FileType = ext[1:] // strip leading dot
+			}
 		}
 
 		if de.IsDir() {
@@ -549,6 +564,284 @@ func (h *handlers) browsePath(w http.ResponseWriter, r *http.Request) {
 		"path":    cleanPath,
 		"parent":  filepath.Dir(cleanPath),
 		"entries": entries,
+	})
+}
+
+// --- Filesystem read/write ---
+
+const maxFileSize = 1 << 20 // 1 MB
+
+// isBinary checks if data contains null bytes, same heuristic as Git.
+func isBinary(data []byte) bool {
+	for _, b := range data {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *handlers) readFile(w http.ResponseWriter, r *http.Request) {
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" {
+		respond.Error(w, http.StatusBadRequest, "path query parameter is required", "BAD_REQUEST")
+		return
+	}
+
+	cleanPath := filepath.Clean(reqPath)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	resolved, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Sprintf("cannot resolve path: %s", err), "BAD_REQUEST")
+		return
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("file not found: %s", err), "NOT_FOUND")
+		return
+	}
+
+	if info.IsDir() {
+		respond.Error(w, http.StatusBadRequest, "path is a directory, not a file", "BAD_REQUEST")
+		return
+	}
+
+	if info.Size() > maxFileSize {
+		respond.Error(w, http.StatusRequestEntityTooLarge, "file exceeds 1MB limit", "FILE_TOO_LARGE")
+		return
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		slog.Error("failed to read file", "path", resolved, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to read file", "IO_ERROR")
+		return
+	}
+
+	// Check first 512 bytes for binary content.
+	checkLen := 512
+	if len(data) < checkLen {
+		checkLen = len(data)
+	}
+	if isBinary(data[:checkLen]) {
+		respond.Error(w, http.StatusUnsupportedMediaType, "file appears to be binary", "BINARY_FILE")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"path":    resolved,
+		"content": string(data),
+		"size":    info.Size(),
+	})
+}
+
+func (h *handlers) writeFile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFileSize)
+
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if errors.As(err, new(*http.MaxBytesError)) {
+			respond.Error(w, http.StatusRequestEntityTooLarge, "request body exceeds 1MB limit", "FILE_TOO_LARGE")
+			return
+		}
+		respond.Error(w, http.StatusBadRequest, "invalid JSON body", "BAD_REQUEST")
+		return
+	}
+
+	cleanPath := filepath.Clean(body.Path)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(cleanPath))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Sprintf("parent directory does not exist: %s", err), "BAD_REQUEST")
+		return
+	}
+	targetPath := filepath.Join(resolved, filepath.Base(cleanPath))
+
+	perm := os.FileMode(0644)
+	if info, err := os.Stat(targetPath); err == nil {
+		// Existing file: create .bak backup preserving permissions.
+		perm = info.Mode().Perm()
+		originalData, err := os.ReadFile(targetPath)
+		if err != nil {
+			slog.Error("failed to read original file for backup", "path", targetPath, "error", err)
+			respond.Error(w, http.StatusInternalServerError, "failed to read original file", "IO_ERROR")
+			return
+		}
+		if err := os.WriteFile(targetPath+".bak", originalData, perm); err != nil {
+			slog.Error("failed to create backup", "path", targetPath+".bak", "error", err)
+			respond.Error(w, http.StatusInternalServerError, "failed to create backup", "IO_ERROR")
+			return
+		}
+	}
+
+	if err := os.WriteFile(targetPath, []byte(body.Content), perm); err != nil {
+		slog.Error("failed to write file", "path", targetPath, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to write file", "IO_ERROR")
+		return
+	}
+
+	slog.Info("file written", "path", targetPath)
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("File '%s' saved successfully", targetPath),
+	})
+}
+
+func (h *handlers) mkdirPath(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid JSON body", "BAD_REQUEST")
+		return
+	}
+
+	cleanPath := filepath.Clean(body.Path)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	if _, err := os.Stat(cleanPath); err == nil {
+		respond.Error(w, http.StatusConflict, "path already exists", "ALREADY_EXISTS")
+		return
+	}
+
+	if err := os.MkdirAll(cleanPath, 0755); err != nil {
+		slog.Error("failed to create directory", "path", cleanPath, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to create directory", "IO_ERROR")
+		return
+	}
+
+	slog.Info("directory created", "path", cleanPath)
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Directory '%s' created successfully", cleanPath),
+	})
+}
+
+func (h *handlers) renamePath(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid JSON body", "BAD_REQUEST")
+		return
+	}
+
+	oldClean := filepath.Clean(body.OldPath)
+	newClean := filepath.Clean(body.NewPath)
+
+	if !filepath.IsAbs(oldClean) || !filepath.IsAbs(newClean) {
+		respond.Error(w, http.StatusBadRequest, "both paths must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	if _, err := os.Stat(oldClean); err != nil {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("source path not found: %s", err), "NOT_FOUND")
+		return
+	}
+
+	if _, err := os.Stat(newClean); err == nil {
+		respond.Error(w, http.StatusConflict, "destination already exists", "ALREADY_EXISTS")
+		return
+	}
+
+	parentDir := filepath.Dir(newClean)
+	if _, err := os.Stat(parentDir); err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Sprintf("destination parent directory does not exist: %s", parentDir), "BAD_REQUEST")
+		return
+	}
+
+	if err := os.Rename(oldClean, newClean); err != nil {
+		slog.Error("failed to rename", "old", oldClean, "new", newClean, "error", err)
+		respond.Error(w, http.StatusInternalServerError, "failed to rename", "IO_ERROR")
+		return
+	}
+
+	slog.Info("path renamed", "old", oldClean, "new", newClean)
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Renamed '%s' to '%s'", oldClean, newClean),
+	})
+}
+
+// dangerousPaths are top-level system directories that must never be deleted.
+var dangerousPaths = map[string]bool{
+	"/":     true,
+	"/bin":  true, "/sbin": true,
+	"/boot": true, "/dev": true,
+	"/etc":  true, "/home": true,
+	"/lib":  true, "/lib64": true,
+	"/proc": true, "/root": true,
+	"/run":  true, "/sys": true,
+	"/usr":  true, "/var": true,
+	"/opt":  true, "/snap": true,
+	"/tmp":  true, "/mnt": true,
+}
+
+func (h *handlers) deletePath(w http.ResponseWriter, r *http.Request) {
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" {
+		respond.Error(w, http.StatusBadRequest, "path query parameter is required", "BAD_REQUEST")
+		return
+	}
+
+	cleanPath := filepath.Clean(reqPath)
+	if !filepath.IsAbs(cleanPath) {
+		respond.Error(w, http.StatusBadRequest, "path must be absolute", "BAD_REQUEST")
+		return
+	}
+
+	resolved, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("path not found: %s", err), "NOT_FOUND")
+		return
+	}
+
+	// Guard against system dirs AFTER symlink resolution to prevent bypass.
+	if dangerousPaths[resolved] {
+		respond.Error(w, http.StatusForbidden, "refusing to delete system directory", "FORBIDDEN")
+		return
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		respond.Error(w, http.StatusNotFound, fmt.Sprintf("path not found: %s", err), "NOT_FOUND")
+		return
+	}
+
+	if info.IsDir() {
+		if err := os.RemoveAll(resolved); err != nil {
+			slog.Error("failed to delete directory", "path", resolved, "error", err)
+			respond.Error(w, http.StatusInternalServerError, "failed to delete directory", "IO_ERROR")
+			return
+		}
+	} else {
+		if err := os.Remove(resolved); err != nil {
+			slog.Error("failed to delete file", "path", resolved, "error", err)
+			respond.Error(w, http.StatusInternalServerError, "failed to delete file", "IO_ERROR")
+			return
+		}
+	}
+
+	slog.Info("path deleted", "path", resolved)
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("'%s' deleted successfully", resolved),
 	})
 }
 

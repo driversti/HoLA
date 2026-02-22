@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.driversti.hola.data.api.ApiProvider
 import dev.driversti.hola.data.api.HolaApi
+import dev.driversti.hola.data.model.FileWriteRequest
 import dev.driversti.hola.data.model.FsEntry
+import dev.driversti.hola.data.model.MkdirRequest
 import dev.driversti.hola.data.model.RegisterStackRequest
+import dev.driversti.hola.data.model.RenameRequest
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +24,10 @@ data class FileBrowserState(
     val isLoading: Boolean = true,
     val message: String? = null,
     val error: String? = null,
+    val showCreateDialog: Boolean = false,
+    val showRenameDialog: FsEntry? = null,
+    val showDeleteConfirm: FsEntry? = null,
+    val operationInProgress: Boolean = false,
 )
 
 class FileBrowserViewModel(
@@ -99,8 +106,127 @@ class FileBrowserViewModel(
         }
     }
 
+    fun showCreateDialog() {
+        _state.value = _state.value.copy(showCreateDialog = true)
+    }
+
+    fun dismissCreateDialog() {
+        _state.value = _state.value.copy(showCreateDialog = false)
+    }
+
+    fun showRenameDialog(entry: FsEntry) {
+        _state.value = _state.value.copy(showRenameDialog = entry)
+    }
+
+    fun dismissRenameDialog() {
+        _state.value = _state.value.copy(showRenameDialog = null)
+    }
+
+    fun showDeleteConfirm(entry: FsEntry) {
+        _state.value = _state.value.copy(showDeleteConfirm = entry)
+    }
+
+    fun dismissDeleteConfirm() {
+        _state.value = _state.value.copy(showDeleteConfirm = null)
+    }
+
+    fun createFile(name: String) {
+        val client = api ?: return
+        val path = buildChildPath(name)
+        viewModelScope.launch {
+            _state.value = _state.value.copy(operationInProgress = true, showCreateDialog = false)
+            try {
+                val result = client.writeFile(FileWriteRequest(path, ""))
+                if (result.success) {
+                    _state.value = _state.value.copy(message = "File '$name' created")
+                    refresh()
+                } else {
+                    _state.value = _state.value.copy(error = result.error ?: "Failed to create file")
+                }
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Failed to create file")
+            } finally {
+                _state.value = _state.value.copy(operationInProgress = false)
+            }
+        }
+    }
+
+    fun createDirectory(name: String) {
+        val client = api ?: return
+        val path = buildChildPath(name)
+        viewModelScope.launch {
+            _state.value = _state.value.copy(operationInProgress = true, showCreateDialog = false)
+            try {
+                val result = client.mkdir(MkdirRequest(path))
+                if (result.success) {
+                    _state.value = _state.value.copy(message = "Directory '$name' created")
+                    refresh()
+                } else {
+                    _state.value = _state.value.copy(error = result.error ?: "Failed to create directory")
+                }
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Failed to create directory")
+            } finally {
+                _state.value = _state.value.copy(operationInProgress = false)
+            }
+        }
+    }
+
+    fun renameEntry(entry: FsEntry, newName: String) {
+        val client = api ?: return
+        val parentDir = entry.path.substringBeforeLast("/").ifEmpty { "/" }
+        val newPath = if (parentDir == "/") "/$newName" else "$parentDir/$newName"
+        viewModelScope.launch {
+            _state.value = _state.value.copy(operationInProgress = true, showRenameDialog = null)
+            try {
+                val result = client.renamePath(RenameRequest(entry.path, newPath))
+                if (result.success) {
+                    _state.value = _state.value.copy(message = "Renamed to '$newName'")
+                    refresh()
+                } else {
+                    _state.value = _state.value.copy(error = result.error ?: "Failed to rename")
+                }
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Failed to rename")
+            } finally {
+                _state.value = _state.value.copy(operationInProgress = false)
+            }
+        }
+    }
+
+    fun deleteEntry(entry: FsEntry) {
+        val client = api ?: return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(operationInProgress = true, showDeleteConfirm = null)
+            try {
+                val result = client.deletePath(entry.path)
+                if (result.success) {
+                    _state.value = _state.value.copy(message = "'${entry.name}' deleted")
+                    refresh()
+                } else {
+                    _state.value = _state.value.copy(error = result.error ?: "Failed to delete")
+                }
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Failed to delete")
+            } finally {
+                _state.value = _state.value.copy(operationInProgress = false)
+            }
+        }
+    }
+
     fun clearMessage() {
         _state.value = _state.value.copy(message = null, error = null)
+    }
+
+    private fun refresh() {
+        navigateTo(_state.value.currentPath)
+    }
+
+    private fun buildChildPath(name: String): String {
+        // Strip path separators to prevent directory traversal.
+        val safeName = name.replace("/", "").replace("\\", "")
+        val current = _state.value.currentPath
+        return if (current.endsWith("/")) "$current$safeName" else "$current/$safeName"
     }
 
     private fun buildBreadcrumbs(path: String): List<Pair<String, String>> {

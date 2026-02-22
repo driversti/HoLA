@@ -6,11 +6,15 @@ import dev.driversti.hola.data.model.BrowseResponse
 import dev.driversti.hola.data.model.ComposeFileResponse
 import dev.driversti.hola.data.model.ContainerLogsResponse
 import dev.driversti.hola.data.model.DiskUsageResponse
+import dev.driversti.hola.data.model.FileReadResponse
+import dev.driversti.hola.data.model.FileWriteRequest
 import dev.driversti.hola.data.model.HealthResponse
 import dev.driversti.hola.data.model.ImageListResponse
+import dev.driversti.hola.data.model.MkdirRequest
 import dev.driversti.hola.data.model.NetworkListResponse
 import dev.driversti.hola.data.model.PruneResponse
 import dev.driversti.hola.data.model.RegisterStackRequest
+import dev.driversti.hola.data.model.RenameRequest
 import dev.driversti.hola.data.model.UpdateComposeRequest
 import dev.driversti.hola.data.model.StackDetail
 import dev.driversti.hola.data.model.StackListResponse
@@ -38,6 +42,21 @@ interface HolaApi {
 
     @GET("api/v1/fs/browse")
     suspend fun browsePath(@Query("path") path: String = "/"): BrowseResponse
+
+    @GET("api/v1/fs/read")
+    suspend fun readFile(@Query("path") path: String): FileReadResponse
+
+    @PUT("api/v1/fs/write")
+    suspend fun writeFile(@Body request: FileWriteRequest): ActionResponse
+
+    @POST("api/v1/fs/mkdir")
+    suspend fun mkdir(@Body request: MkdirRequest): ActionResponse
+
+    @POST("api/v1/fs/rename")
+    suspend fun renamePath(@Body request: RenameRequest): ActionResponse
+
+    @HTTP(method = "DELETE", path = "api/v1/fs/delete", hasBody = false)
+    suspend fun deletePath(@Query("path") path: String): ActionResponse
 
     @GET("api/v1/stacks")
     suspend fun listStacks(): StackListResponse

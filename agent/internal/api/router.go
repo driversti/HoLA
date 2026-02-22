@@ -23,8 +23,13 @@ func NewRouter(version string, authMw *auth.Middleware, dockerClient *docker.Cli
 	mux.HandleFunc("GET /api/v1/agent/update", h.checkUpdate)
 	mux.HandleFunc("POST /api/v1/agent/update", h.applyUpdate)
 
-	// Filesystem browse
+	// Filesystem
 	mux.HandleFunc("GET /api/v1/fs/browse", h.browsePath)
+	mux.HandleFunc("GET /api/v1/fs/read", h.readFile)
+	mux.HandleFunc("PUT /api/v1/fs/write", h.writeFile)
+	mux.HandleFunc("POST /api/v1/fs/mkdir", h.mkdirPath)
+	mux.HandleFunc("POST /api/v1/fs/rename", h.renamePath)
+	mux.HandleFunc("DELETE /api/v1/fs/delete", h.deletePath)
 
 	// Stacks — read
 	mux.HandleFunc("GET /api/v1/stacks", h.listStacks)
