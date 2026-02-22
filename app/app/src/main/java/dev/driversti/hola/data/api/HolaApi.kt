@@ -15,6 +15,7 @@ import dev.driversti.hola.data.model.NetworkListResponse
 import dev.driversti.hola.data.model.PruneResponse
 import dev.driversti.hola.data.model.RegisterStackRequest
 import dev.driversti.hola.data.model.RenameRequest
+import dev.driversti.hola.data.model.UpdateCheck
 import dev.driversti.hola.data.model.UpdateComposeRequest
 import dev.driversti.hola.data.model.StackDetail
 import dev.driversti.hola.data.model.StackListResponse
@@ -39,6 +40,12 @@ interface HolaApi {
 
     @GET("api/v1/system/metrics")
     suspend fun systemMetrics(): SystemMetrics
+
+    @GET("api/v1/agent/update")
+    suspend fun checkUpdate(): UpdateCheck
+
+    @POST("api/v1/agent/update")
+    suspend fun applyUpdate(): ActionResponse
 
     @GET("api/v1/fs/browse")
     suspend fun browsePath(@Query("path") path: String = "/"): BrowseResponse

@@ -14,13 +14,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -48,6 +50,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.driversti.hola.data.api.WebSocketManager
 import dev.driversti.hola.data.model.Stack
 import dev.driversti.hola.data.model.SystemMetrics
+import dev.driversti.hola.data.model.UpdateCheck
 import dev.driversti.hola.data.repository.ServerRepository
 import dev.driversti.hola.data.repository.TokenRepository
 
@@ -76,6 +79,13 @@ fun ServerDetailScreen(
 
     LaunchedEffect(state.error) {
         state.error?.let { snackbarHostState.showSnackbar(it) }
+    }
+
+    LaunchedEffect(state.updateMessage) {
+        state.updateMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearUpdateMessage()
+        }
     }
 
     Scaffold(
@@ -115,6 +125,16 @@ fun ServerDetailScreen(
             ) {
                 state.metrics?.let { metrics ->
                     item { MetricsHeader(metrics) }
+                }
+
+                state.updateCheck?.let { check ->
+                    item {
+                        UpdateCard(
+                            updateCheck = check,
+                            isUpdating = state.isUpdating,
+                            onUpdate = viewModel::applyUpdate,
+                        )
+                    }
                 }
 
                 item {
@@ -228,6 +248,79 @@ private fun StackCard(stack: Stack, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun UpdateCard(
+    updateCheck: UpdateCheck,
+    isUpdating: Boolean,
+    onUpdate: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (updateCheck.updateAvailable) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.SystemUpdate,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = if (updateCheck.updateAvailable) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                if (updateCheck.updateAvailable) {
+                    Text(
+                        "Update available",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    Text(
+                        "v${updateCheck.currentVersion} -> v${updateCheck.latestVersion}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    Text(
+                        "Agent v${updateCheck.currentVersion}",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Up to date",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (updateCheck.updateAvailable) {
+                if (isUpdating) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Button(onClick = onUpdate) {
+                        Text("Update")
+                    }
+                }
+            }
         }
     }
 }

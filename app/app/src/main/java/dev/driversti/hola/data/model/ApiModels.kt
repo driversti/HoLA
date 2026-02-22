@@ -19,6 +19,17 @@ data class AgentInfo(
     @SerialName("docker_version") val dockerVersion: String,
 )
 
+// --- Agent Update ---
+
+@Serializable
+data class UpdateCheck(
+    @SerialName("current_version") val currentVersion: String,
+    @SerialName("latest_version") val latestVersion: String,
+    @SerialName("update_available") val updateAvailable: Boolean,
+    @SerialName("asset_name") val assetName: String = "",
+    @SerialName("asset_size") val assetSize: Int = 0,
+)
+
 // --- System Metrics ---
 
 @Serializable
